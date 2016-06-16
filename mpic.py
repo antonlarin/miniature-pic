@@ -68,30 +68,34 @@ def get_field_generator(coarse_grid):
 
 # SG-DO operations
 def correct_b_on_interface(grids, indices):
-    coarse_grid = grids['coarse']
-    coarse_grid.bs[indices['left_coarse_b']] -= (coarse_grid.cdt_by_dx *
-            grids['left_aux_coarse'].es[indices['left_aux_coarse_e']])
-    coarse_grid.bs[indices['right_coarse_b']] += (coarse_grid.cdt_by_dx *
-            grids['right_aux_coarse'].es[indices['right_aux_coarse_e']])
+    b_source(grids['coarse'], indices['left_coarse_b'],
+            grids['left_aux_coarse'].es[indices['left_aux_coarse_e']],
+            'right')
+    b_source(grids['coarse'], indices['right_coarse_b'],
+            grids['right_aux_coarse'].es[indices['right_aux_coarse_e']],
+            'left')
 
-    fine_grid = grids['fine']
-    fine_grid.bs[indices['left_fine_b']] += (fine_grid.cdt_by_dx *
-            grids['left_aux_fine'].es[indices['left_aux_fine_e']])
-    fine_grid.bs[indices['right_fine_b']] -= (fine_grid.cdt_by_dx *
-            grids['right_aux_fine'].es[indices['right_aux_fine_e']])
+    b_source(grids['fine'], indices['left_fine_b'],
+            grids['left_aux_fine'].es[indices['left_aux_fine_e']],
+            'right')
+    b_source(grids['fine'], indices['right_fine_b'],
+            grids['right_aux_fine'].es[indices['right_aux_fine_e']],
+            'left')
 
 def correct_e_on_interface(grids, indices):
-    coarse_grid = grids['coarse']
-    coarse_grid.es[indices['left_coarse_e']] -= (coarse_grid.cdt_by_dx *
-            grids['left_aux_coarse'].bs[indices['left_aux_coarse_b']])
-    coarse_grid.es[indices['right_coarse_e']] += (coarse_grid.cdt_by_dx *
-            grids['right_aux_coarse'].bs[indices['right_aux_coarse_b']])
+    e_source(grids['coarse'], indices['left_coarse_e'],
+            grids['left_aux_coarse'].bs[indices['left_aux_coarse_b']],
+            'right')
+    e_source(grids['coarse'], indices['right_coarse_e'],
+            grids['right_aux_coarse'].bs[indices['right_aux_coarse_b']],
+            'left')
 
-    fine_grid = grids['fine']
-    fine_grid.es[indices['left_fine_e']] += (fine_grid.cdt_by_dx *
-            grids['left_aux_fine'].bs[indices['left_aux_fine_b']])
-    fine_grid.es[indices['right_fine_e']] -= (fine_grid.cdt_by_dx *
-            grids['right_aux_fine'].bs[indices['right_aux_fine_b']])
+    e_source(grids['fine'], indices['left_fine_e'],
+            grids['left_aux_fine'].bs[indices['left_aux_fine_b']],
+            'right')
+    e_source(grids['fine'], indices['right_fine_e'],
+            grids['right_aux_fine'].bs[indices['right_aux_fine_b']],
+            'left')
 
 def transfer_b_to_aux_grids(grids, indices):
     grids['left_aux_coarse'].bs[indices['left_aux_coarse_b']] = (
