@@ -22,6 +22,7 @@ AUX_GRID_SIZE = 1
 ITERATIONS = 5000
 OUTPUT_PERIOD = 200
 
+
 # pulse description
 def sgn(x):
     return 1 if x > 0 else (-1 if x < 0 else 0)
@@ -42,4 +43,18 @@ def shape(r, t):
 
 def pulse(x, t):
     return shape(abs(x), t)
+
+
+# source fields
+def left_b(x, t):
+    return pulse(x, t)
+
+def left_e(x, t):
+    return pulse(x, t)
+
+def right_b(x, t):
+    return -pulse(x, t)
+
+def right_e(x, t):
+    return pulse(x, t)
 

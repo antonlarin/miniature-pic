@@ -9,8 +9,19 @@ import defs
 from grid import Grid
 from pml import Pml
 
-# field update and TFSF
+# TFSF
+def _source(grid, dst_field, dst_idx, src_value, direction):
+    direction_factor = -1 if direction == 'left' else 1
+    dst_field[dst_idx] += direction_factor * grid.cdt_by_dx * src_value
 
+def b_source(grid, dst_idx, e_value, direction):
+    _source(grid, grid.bs, dst_idx, e_value, direction)
+
+def e_source(grid, dst_idx, b_value, direction):
+    _source(grid, grid.es, dst_idx, b_value, direction)
+
+
+# field update
 def update_e(grid, **kwargs):
     skip = kwargs.get('skip', lambda x: False)
     for i in range(grid.size - 1):
@@ -25,14 +36,37 @@ def update_b(grid, **kwargs):
             A, B = grid.get_b_coeffs(i)
             grid.bs[i] = A * grid.bs[i] + B * (grid.es[i - 1] - grid.es[i])
 
-def generate_b(grid, idx, t):
-    x = grid.x0 + grid.dx * (idx - 0.5)
-    grid.bs[idx] += grid.cdt_by_dx * defs.pulse(x, t)
+# field generation
+def get_field_generator(coarse_grid):
+    _fieldgen_idx = defs.PML_SIZE + 1;
+    left_e_x = coarse_grid.x0 + coarse_grid.dx * (_fieldgen_idx + 0.5)
+    right_e_x = coarse_grid.x0 + coarse_grid.dx * (defs.COARSE_GRID_SIZE -
+            _fieldgen_idx - 0.5)
+    def generate_b(t):
+        # left
+        b_source(coarse_grid, _fieldgen_idx, defs.left_e(left_e_x, t),
+                'right')
 
-def generate_e(grid, idx, t):
-    x = grid.x0 + grid.dx * (idx + 1)
-    grid.es[idx] += grid.cdt_by_dx * defs.pulse(x, t)
+        # right
+        b_source(coarse_grid, defs.COARSE_GRID_SIZE - _fieldgen_idx,
+                defs.right_e(right_e_x, t), 'left')
 
+    left_b_x = coarse_grid.x0 + coarse_grid.dx * _fieldgen_idx
+    right_b_x = coarse_grid.x0 + coarse_grid.dx * (defs.COARSE_GRID_SIZE -
+            _fieldgen_idx)
+    def generate_e(t):
+        # left
+        e_source(coarse_grid, _fieldgen_idx, defs.left_b(left_b_x, t),
+                'right')
+
+        # right
+        e_source(coarse_grid, defs.COARSE_GRID_SIZE - _fieldgen_idx - 1,
+                defs.right_b(right_b_x, t), 'left')
+
+    return (generate_b, generate_e)
+
+
+# SG-DO operations
 def correct_b_on_interface(grids, indices):
     coarse_grid = grids['coarse']
     coarse_grid.bs[indices['left_coarse_b']] -= (coarse_grid.cdt_by_dx *
@@ -115,7 +149,6 @@ def simulate(ref_factor):
     coarse_grid.add_pml(Pml(defs.PML_SIZE, 1, coarse_grid))
     coarse_grid.add_pml(Pml(defs.COARSE_GRID_SIZE - defs.PML_SIZE - 1,
             defs.COARSE_GRID_SIZE - 2, coarse_grid))
-    fieldgen_idx = defs.PML_SIZE + 2;
 
     # fine grid
     fine_grid_idx = (defs.COARSE_GRID_SIZE - defs.FINE_GRID_SIZE) / 2
@@ -199,6 +232,8 @@ def simulate(ref_factor):
         'right_aux_fine_e': aux_grid_size - 2
     }
 
+    generate_b, generate_e = get_field_generator(coarse_grid)
+
     stdout.write('iteration ')
     for t in range(defs.ITERATIONS):
         t_str = '{}'.format(t)
@@ -218,7 +253,7 @@ def simulate(ref_factor):
         update_b(right_aux_coarse_grid)
         update_b(right_aux_fine_grid)
 
-        generate_b(coarse_grid, fieldgen_idx, t * coarse_grid.dt)
+        generate_b(t * coarse_grid.dt)
         correct_b_on_interface(grids, indices)
         transfer_b_to_aux_grids(grids, indices)
 
@@ -230,7 +265,7 @@ def simulate(ref_factor):
         update_e(right_aux_coarse_grid)
         update_e(right_aux_fine_grid)
 
-        generate_e(coarse_grid, fieldgen_idx - 1, (t + 0.5) * coarse_grid.dt)
+        generate_e((t + 0.5) * coarse_grid.dt)
         correct_e_on_interface(grids, indices)
 
         if t % defs.OUTPUT_PERIOD == 0:
