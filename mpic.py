@@ -70,10 +70,10 @@ def get_field_generator(coarse_grid):
 def correct_b_on_interface(grids, indices):
     b_source(grids['coarse'], indices['left_coarse_b'],
             grids['left_aux_coarse'].es[indices['left_aux_coarse_e']],
-            'right')
+            'left')
     b_source(grids['coarse'], indices['right_coarse_b'],
             grids['right_aux_coarse'].es[indices['right_aux_coarse_e']],
-            'left')
+            'right')
 
     b_source(grids['fine'], indices['left_fine_b'],
             grids['left_aux_fine'].es[indices['left_aux_fine_e']],
@@ -85,10 +85,10 @@ def correct_b_on_interface(grids, indices):
 def correct_e_on_interface(grids, indices):
     e_source(grids['coarse'], indices['left_coarse_e'],
             grids['left_aux_coarse'].bs[indices['left_aux_coarse_b']],
-            'right')
+            'left')
     e_source(grids['coarse'], indices['right_coarse_e'],
             grids['right_aux_coarse'].bs[indices['right_aux_coarse_b']],
-            'left')
+            'right')
 
     e_source(grids['fine'], indices['left_fine_e'],
             grids['left_aux_fine'].bs[indices['left_aux_fine_b']],
@@ -131,7 +131,7 @@ def build_plot(coarse_grid, fine_grid, idx):
     plt.legend(loc='best')
     plt.xlabel('x')
     plt.ylabel('Bz')
-    plt.ylim(1, 3e8)
+    plt.ylim(1e-8, 1)
     plt.xlim(xs[0], xs[-1])
     plt.savefig('{0:06d}.png'.format(idx), dpi=120)
 
