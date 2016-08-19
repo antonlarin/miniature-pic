@@ -37,3 +37,9 @@ class Grid(object):
 
         return (1, C * self.dt / self.dx)
 
+    def in_pml(self, i):
+        result = False
+        for pml in self.pmls:
+            result = result or pml.is_inside(i)
+        return result
+

@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 
-from __future__ import print_function
+from __future__ import print_function, division
 from sys import stdout, stderr, argv, exit
 import numpy as np
 import matplotlib.pyplot as plt
+import math
 
 import defs
 from grid import Grid
@@ -29,12 +30,23 @@ def update_e(grid, **kwargs):
             A, B = grid.get_e_coeffs(i)
             grid.es[i] = A * grid.es[i] + B * (grid.bs[i] - grid.bs[i + 1])
 
-def update_b(grid, **kwargs):
+def update_b(grid, first_half, **kwargs):
     skip = kwargs.get('skip', lambda x: False)
     for i in range(1, grid.size):
         if not skip(i):
             A, B = grid.get_b_coeffs(i)
-            grid.bs[i] = A * grid.bs[i] + B * (grid.es[i - 1] - grid.es[i])
+            if first_half:
+                if not grid.in_pml(i):
+                    grid.bs[i] = (A * grid.bs[i] +
+                            0.5 * B * (grid.es[i - 1] - grid.es[i]))
+            else:
+                if grid.in_pml(i):
+                    grid.bs[i] = (A * grid.bs[i] +
+                            B * (grid.es[i - 1] - grid.es[i]))
+                else:
+                    grid.bs[i] = (A * grid.bs[i] +
+                            0.5 * B * (grid.es[i - 1] - grid.es[i]))
+
 
 # field generation
 def get_field_generator(coarse_grid):
@@ -66,49 +78,127 @@ def get_field_generator(coarse_grid):
     return (generate_b, generate_e)
 
 
-# SG-DO operations
-def correct_b_on_interface(grids, indices):
-    b_source(grids['coarse'], indices['left_coarse_b'],
-            grids['left_aux_coarse'].es[indices['left_aux_coarse_e']],
-            'left')
-    b_source(grids['coarse'], indices['right_coarse_b'],
-            grids['right_aux_coarse'].es[indices['right_aux_coarse_e']],
-            'right')
+# transfers
+def M(x):
+    return math.sin(defs.PI * x) ** 2
 
-    b_source(grids['fine'], indices['left_fine_b'],
-            grids['left_aux_fine'].es[indices['left_aux_fine_e']],
-            'right')
-    b_source(grids['fine'], indices['right_fine_b'],
-            grids['right_aux_fine'].es[indices['right_aux_fine_e']],
-            'left')
+def conduct_transfers(coarse_grid, fine_grid, transfer_params):
+    left_cg_window_start = transfer_params['left_cg_window_start']
+    left_cg_window_end = transfer_params['left_cg_window_end']
+    left_fg_window_start = transfer_params['left_fg_window_start']
+    left_fg_window_end = transfer_params['left_fg_window_end']
+    ref_factor = transfer_params['ref_factor']
 
-def correct_e_on_interface(grids, indices):
-    e_source(grids['coarse'], indices['left_coarse_e'],
-            grids['left_aux_coarse'].bs[indices['left_aux_coarse_b']],
-            'left')
-    e_source(grids['coarse'], indices['right_coarse_e'],
-            grids['right_aux_coarse'].bs[indices['right_aux_coarse_b']],
-            'right')
+    # left interface
+    # - compute F_m and substract them from the source grids
+    # -- on coarse grid
+    left_cg_window_x0 = coarse_grid.x0 + coarse_grid.dx * left_cg_window_start
+    left_cg_window_x1 = coarse_grid.x0 + coarse_grid.dx * left_cg_window_end
+    left_cg_window_dx = left_cg_window_x1 - left_cg_window_x0
 
-    e_source(grids['fine'], indices['left_fine_e'],
-            grids['left_aux_fine'].bs[indices['left_aux_fine_b']],
-            'right')
-    e_source(grids['fine'], indices['right_fine_e'],
-            grids['right_aux_fine'].bs[indices['right_aux_fine_b']],
-            'left')
+    cg_f_y = [coarse_grid.es[i] for i in
+            range(left_cg_window_start, left_cg_window_end)]
+    cg_f_y_xs = [coarse_grid.x0 + (i + 0.5) * coarse_grid.dx for i in
+            range(left_cg_window_start, left_cg_window_end)]
 
-def transfer_b_to_aux_grids(grids, indices):
-    grids['left_aux_coarse'].bs[indices['left_aux_coarse_b']] = (
-            grids['fine'].bs[indices['left_fine_b']])
-    grids['left_aux_fine'].bs[indices['left_aux_fine_b']] = (
-            grids['coarse'].bs[indices['left_coarse_b']])
+    cg_f_z = [coarse_grid.bs[i]*1j for i in
+            range(left_cg_window_start, left_cg_window_end)]
+    cg_f_z_xs = [coarse_grid.x0 + i * coarse_grid.dx for i in
+            range(left_cg_window_start, left_cg_window_end)]
 
-    grids['right_aux_coarse'].bs[indices['right_aux_coarse_b']] = (
-            grids['fine'].bs[indices['right_fine_b']])
-    grids['right_aux_fine'].bs[indices['right_aux_fine_b']] = (
-            grids['coarse'].bs[indices['right_coarse_b']])
+    apply_M = lambda (x, v): v * M((x - left_cg_window_x0) / left_cg_window_dx)
+    cg_f_m_y = map(apply_M, zip(cg_f_y_xs, cg_f_y))
+    cg_f_m_z = map(apply_M, zip(cg_f_z_xs, cg_f_z))
+
+    for i in range(left_cg_window_start, left_cg_window_end):
+        coarse_grid.es[i] -= cg_f_m_y[i - left_cg_window_start].real
+        coarse_grid.bs[i] -= cg_f_m_z[i - left_cg_window_start].imag
+
+    # -- on fine grid
+    left_fg_window_x0 = fine_grid.x0 + fine_grid.dx * left_fg_window_start
+    left_fg_window_x1 = fine_grid.x0 + fine_grid.dx * left_fg_window_end
+    left_fg_window_dx = left_fg_window_x1 - left_fg_window_x0
+    print('{} {} {} {}'.format(left_cg_window_x0, left_fg_window_x0,
+        left_cg_window_x1, left_fg_window_x1))
+
+    fg_f_y = [fine_grid.es[i] for i in
+            range(left_fg_window_start, left_fg_window_end)]
+    fg_f_y_xs = [fine_grid.x0 + (i + 0.5) * fine_grid.dx for i in
+            range(left_fg_window_start, left_fg_window_end)]
+
+    fg_f_z = [fine_grid.bs[i]*1j for i in
+            range(left_fg_window_start, left_fg_window_end)]
+    fg_f_z_xs = [fine_grid.x0 + i * fine_grid.dx for i in
+            range(left_fg_window_start, left_fg_window_end)]
+
+    apply_M = lambda (x, v): v * M((x - left_fg_window_x0) / left_fg_window_dx)
+    fg_f_m_y = map(apply_M, zip(fg_f_y_xs, fg_f_y))
+    fg_f_m_z = map(apply_M, zip(fg_f_z_xs, fg_f_z))
+
+    for i in range(left_fg_window_start, left_fg_window_end):
+        fine_grid.es[i] -= fg_f_m_y[i - left_fg_window_start].real
+        fine_grid.bs[i] -= fg_f_m_z[i - left_fg_window_start].imag
+
+    # - compute Fourier transforms of F_m and filter them
+    fourier_cg_f_m_y = np.fft.fft(cg_f_m_y)
+    fourier_cg_f_m_z = np.fft.fft(cg_f_m_z)
+    # -- values from coarse grid: zero values on non-negative wavenumbers
+    for i in range((fourier_cg_f_m_y.size + 1) // 2):
+        fourier_cg_f_m_y[i], fourier_cg_f_m_z[i] = (0, 0)
+
+    fourier_fg_f_m_y = np.fft.fft(fg_f_m_y)
+    fourier_fg_f_m_z = np.fft.fft(fg_f_m_z)
+    # -- values from fine grid: zero values on non-positive wavenumbers
+    fourier_fg_f_m_y[0], fourier_fg_f_m_z[0] = (0, 0)
+    for i in range((fourier_fg_f_m_y.size + 1) // 2, fourier_fg_f_m_y.size):
+        fourier_fg_f_m_y[i], fourier_fg_f_m_z[i] = (0, 0)
+    
+    # - compute inverse transforms and add results to destination grids
+    # -- inserting into fine grid
+    cg_f_m_y_prime = np.concatenate(([0], np.fft.ifft(fourier_cg_f_m_y), [0]))
+    cg_f_m_y_prime_xs = [
+            (coarse_grid.x0 +
+                (left_cg_window_start - 0.5 + i) * coarse_grid.dx)
+            for i in range(len(cg_f_m_y_prime))]
+    cg_f_m_z_prime = np.concatenate((np.fft.ifft(fourier_cg_f_m_z), [0]))
+    cg_f_m_z_prime_xs = [
+            (coarse_grid.x0 +
+                (left_cg_window_start + i) * coarse_grid.dx)
+            for i in range(len(cg_f_m_y_prime))]
+
+    def interpolate(x, grid):
+        intervals = zip(grid[:-1], grid[1:])
+        for ((x1, v1), (x2, v2)) in intervals:
+            if x1 <= x and x < x2:
+                return (x - x1) * (v1 - v2) / (x1 - x2) + v1
+
+    for i in range(left_fg_window_end - left_fg_window_start):
+        fine_grid.es[left_fg_window_start + i] += interpolate(
+                fine_grid.x0 + (left_fg_window_start + i + 0.5) * fine_grid.dx,
+                zip(cg_f_m_y_prime_xs, cg_f_m_y_prime)
+        ).real
+        fine_grid.bs[left_fg_window_start + i] += interpolate(
+                fine_grid.x0 + (left_fg_window_start + i) * fine_grid.dx,
+                zip(cg_f_m_z_prime_xs, cg_f_m_z_prime)
+        ).imag
+
+    # -- inserting into coarse grid
+    half_ref_factor = ref_factor // 2
+    fg_f_m_y_prime = np.fft.ifft(fourier_fg_f_m_y)
+    fg_f_m_z_prime = np.fft.ifft(fourier_fg_f_m_z)
+    for i in range(left_cg_window_end - left_cg_window_start):
+        coarse_grid.es[left_cg_window_start + i] += (
+                fg_f_m_y_prime[i * ref_factor].real
+        )
+        coarse_grid.bs[left_cg_window_start + i] += (
+                fg_f_m_z_prime[half_ref_factor + i * ref_factor].imag
+        )
+
+    # right interface
+    # not yet implemented
 
 
+# utility
 def build_plot(coarse_grid, fine_grid, idx):
     xs = [coarse_grid.x0 + coarse_grid.dx * i
             for i in range(len(coarse_grid.bs))]
@@ -155,85 +245,33 @@ def simulate(ref_factor):
             defs.COARSE_GRID_SIZE - 2, coarse_grid))
 
     # fine grid
-    fine_grid_idx = (defs.COARSE_GRID_SIZE - defs.FINE_GRID_SIZE) / 2
-    fine_x0 = (defs.x0 + fine_grid_idx * defs.dx -
-            (defs.PML_SIZE + 1 + defs.DEBUG_PADDING) * defs.dx / ref_factor)
+    fine_grid_idx = (defs.COARSE_GRID_SIZE - defs.FINE_GRID_SIZE) // 2
+    fine_x0 = (defs.x0 + (fine_grid_idx - defs.FFT_WINDOW_SIZE) * defs.dx -
+            (defs.PML_SIZE + 1) * defs.dx / ref_factor)
     fine_grid_size = (defs.FINE_GRID_SIZE * ref_factor +
-        2 * (defs.PML_SIZE + 1 + defs.DEBUG_PADDING))
+        2 * (defs.PML_SIZE + 1 + defs.FFT_WINDOW_SIZE * ref_factor))
 
-    fine_grid = Grid(fine_grid_size, fine_x0, defs.dx / ref_factor,
-            defs.dt) # defs.dt / ref_factor)
+    fine_grid = Grid(fine_grid_size, fine_x0, defs.dx / ref_factor, defs.dt)
     fine_grid.add_pml(Pml(defs.PML_SIZE, 1, fine_grid))
     fine_grid.add_pml(Pml(fine_grid_size - defs.PML_SIZE - 1,
             fine_grid_size - 2, fine_grid))
 
     # pmls inside coarse grid
-    left_cip_start = fine_grid_idx + defs.DEBUG_PADDING 
-    left_cip_finish = fine_grid_idx + defs.DEBUG_PADDING + defs.PML_SIZE - 1
+    left_cip_start = fine_grid_idx
+    left_cip_finish = fine_grid_idx + defs.PML_SIZE - 1
     coarse_grid.add_pml(Pml(left_cip_start, left_cip_finish, coarse_grid))
-    right_cip_start = (fine_grid_idx + defs.FINE_GRID_SIZE -
-            defs.DEBUG_PADDING)
-    right_cip_finish = (fine_grid_idx + defs.FINE_GRID_SIZE -
-            defs.PML_SIZE + 1 - defs.DEBUG_PADDING)
+    right_cip_start = fine_grid_idx + defs.FINE_GRID_SIZE - 1
+    right_cip_finish = fine_grid_idx + defs.FINE_GRID_SIZE - defs.PML_SIZE
     coarse_grid.add_pml(Pml(right_cip_start, right_cip_finish, coarse_grid))
 
-    # aux grids
-    aux_grid_size = (defs.AUX_GRID_SIZE + defs.DEBUG_PADDING +
-            defs.PML_SIZE + 1)
-
-    left_aux_coarse_x0 = (defs.x0 + fine_grid_idx * defs.dx -
-            (aux_grid_size - defs.AUX_GRID_SIZE) * defs.dx)
-    left_aux_coarse_grid = Grid(aux_grid_size, left_aux_coarse_x0,
-            defs.dx, defs.dt)
-    left_aux_coarse_grid.add_pml(Pml(defs.PML_SIZE, 1, left_aux_coarse_grid))
-
-    left_aux_fine_x0 = (defs.x0 + fine_grid_idx * defs.dx -
-            defs.dx / ref_factor)
-    left_aux_fine_grid = Grid(aux_grid_size, left_aux_fine_x0,
-            defs.dx / ref_factor, defs.dt) # defs.dt / ref_factor)
-    left_aux_fine_grid.add_pml(Pml(defs.AUX_GRID_SIZE +
-            defs.DEBUG_PADDING, aux_grid_size - 2, left_aux_fine_grid))
-
-    right_aux_coarse_x0 = (defs.x0 +
-            (fine_grid_idx + defs.FINE_GRID_SIZE - 1) * defs.dx)
-    right_aux_coarse_grid = Grid(aux_grid_size, right_aux_coarse_x0,
-            defs.dx, defs.dt)
-    right_aux_coarse_grid.add_pml(Pml(defs.AUX_GRID_SIZE +
-            defs.DEBUG_PADDING, aux_grid_size - 2, right_aux_coarse_grid))
-
-    right_aux_fine_x0 = (defs.x0 + (fine_grid_idx + defs.FINE_GRID_SIZE) *
-            defs.dx - (aux_grid_size - 1) * defs.dx / ref_factor)
-    right_aux_fine_grid = Grid(aux_grid_size, right_aux_fine_x0,
-            defs.dx / ref_factor, defs.dt) # defs.dt / ref_factor)
-    right_aux_fine_grid.add_pml(Pml(defs.PML_SIZE, 1, right_aux_fine_grid))
-
     # pack grids and indices into dicts for ease of passing into functions
-    grids = {
-        'coarse': coarse_grid,
-        'fine': fine_grid,
-        'left_aux_coarse': left_aux_coarse_grid,
-        'left_aux_fine': left_aux_fine_grid,
-        'right_aux_coarse': right_aux_coarse_grid,
-        'right_aux_fine': right_aux_fine_grid
-    }
-    indices = {
-        'left_coarse_b': fine_grid_idx,
-        'left_coarse_e': fine_grid_idx - 1,
-        'left_fine_b': defs.PML_SIZE + defs.DEBUG_PADDING + 1,
-        'left_fine_e': defs.PML_SIZE + defs.DEBUG_PADDING + 1,
-        'left_aux_coarse_b': aux_grid_size - 1,
-        'left_aux_coarse_e': aux_grid_size - 2,
-        'left_aux_fine_b': 1,
-        'left_aux_fine_e': 1,
+    transfer_params = {
+            'ref_factor': ref_factor,
 
-        'right_coarse_b': fine_grid_idx + defs.FINE_GRID_SIZE,
-        'right_coarse_e': fine_grid_idx + defs.FINE_GRID_SIZE,
-        'right_fine_b': fine_grid_size - defs.PML_SIZE - defs.DEBUG_PADDING - 1,
-        'right_fine_e': fine_grid_size - defs.PML_SIZE - defs.DEBUG_PADDING - 2,
-        'right_aux_coarse_b': 1,
-        'right_aux_coarse_e': 1,
-        'right_aux_fine_b': aux_grid_size - 1,
-        'right_aux_fine_e': aux_grid_size - 2
+            'left_cg_window_start': fine_grid_idx - defs.FFT_WINDOW_SIZE,
+            'left_cg_window_end': fine_grid_idx,
+            'left_fg_window_start': 1 + defs.PML_SIZE,
+            'left_fg_window_end': 1 + defs.PML_SIZE + defs.FFT_WINDOW_SIZE
     }
 
     generate_b, generate_e = get_field_generator(coarse_grid)
@@ -245,35 +283,28 @@ def simulate(ref_factor):
         stdout.flush()
 
         cg_skip = lambda i: (
-                i >= fine_grid_idx + defs.DEBUG_PADDING + defs.PML_SIZE and
+                i >= fine_grid_idx + defs.FFT_WINDOW_SIZE + defs.PML_SIZE and
                 i < fine_grid_idx + defs.FINE_GRID_SIZE -
-                    defs.DEBUG_PADDING - defs.PML_SIZE)
+                    defs.FFT_WINDOW_SIZE - defs.PML_SIZE)
 
-        # update b
-        update_b(coarse_grid, skip=cg_skip)
-        update_b(fine_grid)
-        update_b(left_aux_coarse_grid)
-        update_b(left_aux_fine_grid)
-        update_b(right_aux_coarse_grid)
-        update_b(right_aux_fine_grid)
-
+        # update second half b
+        update_b(coarse_grid, False, skip=cg_skip)
+        update_b(fine_grid, False)
         generate_b(t * coarse_grid.dt)
-        correct_b_on_interface(grids, indices)
-        transfer_b_to_aux_grids(grids, indices)
 
         # update e
         update_e(coarse_grid, skip=cg_skip)
         update_e(fine_grid)
-        update_e(left_aux_coarse_grid)
-        update_e(left_aux_fine_grid)
-        update_e(right_aux_coarse_grid)
-        update_e(right_aux_fine_grid)
-
         generate_e((t + 0.5) * coarse_grid.dt)
-        correct_e_on_interface(grids, indices)
+        
+        # update first half b
+        update_b(coarse_grid, True, skip=cg_skip)
+        update_b(fine_grid, True)
+
+        conduct_transfers(coarse_grid, fine_grid, transfer_params)
 
         if t % defs.OUTPUT_PERIOD == 0:
-            build_plot(coarse_grid, fine_grid, t / defs.OUTPUT_PERIOD)
+            build_plot(coarse_grid, fine_grid, t // defs.OUTPUT_PERIOD)
 
         stdout.write('\b' * len(t_str))
 
