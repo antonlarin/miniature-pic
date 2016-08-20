@@ -203,6 +203,7 @@ def build_plot(coarse_grid, fine_grid, idx):
 
     plt.clf()
     params = { 'basey': 10, 'nonposy': 'clip' }
+    plt.subplot(211)
     try:
         plt.semilogy(xs, coarse_grid.bs, 'r', label='CG', **params)
     except ValueError:
@@ -215,10 +216,30 @@ def build_plot(coarse_grid, fine_grid, idx):
 
     plt.grid()
     plt.legend(loc='best')
-    plt.xlabel('x')
     plt.ylabel('Bz')
     plt.ylim(1e-8, 1)
     plt.xlim(xs[0], xs[-1])
+
+    xs = map(lambda x: x + 0.5 * coarse_grid.dx, xs)
+    fine_xs = map(lambda x: x + 0.5 * fine_grid.dx, fine_xs)
+    plt.subplot(212)
+    try:
+        plt.semilogy(xs, coarse_grid.es, 'r', label='CG', **params)
+    except ValueError:
+        pass
+
+    try:
+        plt.semilogy(fine_xs, fine_grid.es, 'b', label='FG', **params)
+    except ValueError:
+        pass
+
+    plt.grid()
+    plt.legend(loc='best')
+    plt.xlabel('x')
+    plt.ylabel('Ey')
+    plt.ylim(1e-8, 1)
+    plt.xlim(xs[0], xs[-1])
+
     plt.savefig('{0:06d}.png'.format(idx), dpi=120)
 
 def parse_args():
@@ -280,9 +301,9 @@ def simulate(ref_factor):
         stdout.flush()
 
         cg_skip = lambda i: (
-                i >= fine_grid_idx + defs.FFT_WINDOW_SIZE + defs.PML_SIZE and
+                i >= fine_grid_idx + defs.PML_SIZE and
                 i < fine_grid_idx + defs.FINE_GRID_SIZE -
-                    defs.FFT_WINDOW_SIZE - defs.PML_SIZE)
+                    defs.PML_SIZE)
 
         # update second half b
         update_b(coarse_grid, False, skip=cg_skip)
