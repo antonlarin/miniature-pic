@@ -23,7 +23,7 @@ x0 = 0
 PML_SIZE = 12
 
 FINE_GRID_SIZE = 130 * resolution_multiplier # in coarse grid cell units
-FFT_WINDOW_SIZE = 19
+FFT_WINDOW_SIZE = 29
 AUX_GRID_SIZE = 1
 
 ITERATIONS = courant_factor * resolution_multiplier * 600

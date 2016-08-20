@@ -95,22 +95,21 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
     left_cg_window_x0 = coarse_grid.x0 + coarse_grid.dx * left_cg_window_start
     left_cg_window_x1 = coarse_grid.x0 + coarse_grid.dx * left_cg_window_end
     left_cg_window_dx = left_cg_window_x1 - left_cg_window_x0
+    left_cg_window_indices = range(left_cg_window_start, left_cg_window_end)
 
-    cg_f_y = [coarse_grid.es[i] for i in
-            range(left_cg_window_start, left_cg_window_end)]
+    cg_f_y = [coarse_grid.es[i] for i in left_cg_window_indices]
     cg_f_y_xs = [coarse_grid.x0 + (i + 0.5) * coarse_grid.dx for i in
-            range(left_cg_window_start, left_cg_window_end)]
+            left_cg_window_indices]
 
-    cg_f_z = [coarse_grid.bs[i]*1j for i in
-            range(left_cg_window_start, left_cg_window_end)]
+    cg_f_z = [coarse_grid.bs[i]*1j for i in left_cg_window_indices]
     cg_f_z_xs = [coarse_grid.x0 + i * coarse_grid.dx for i in
-            range(left_cg_window_start, left_cg_window_end)]
+            left_cg_window_indices]
 
     apply_M = lambda (x, v): v * M((x - left_cg_window_x0) / left_cg_window_dx)
     cg_f_m_y = map(apply_M, zip(cg_f_y_xs, cg_f_y))
     cg_f_m_z = map(apply_M, zip(cg_f_z_xs, cg_f_z))
 
-    for i in range(left_cg_window_start, left_cg_window_end):
+    for i in left_cg_window_indices:
         coarse_grid.es[i] -= cg_f_m_y[i - left_cg_window_start].real
         coarse_grid.bs[i] -= cg_f_m_z[i - left_cg_window_start].imag
 
@@ -118,53 +117,50 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
     left_fg_window_x0 = fine_grid.x0 + fine_grid.dx * left_fg_window_start
     left_fg_window_x1 = fine_grid.x0 + fine_grid.dx * left_fg_window_end
     left_fg_window_dx = left_fg_window_x1 - left_fg_window_x0
-    print('{} {} {} {}'.format(left_cg_window_x0, left_fg_window_x0,
-        left_cg_window_x1, left_fg_window_x1))
+    left_fg_window_indices = range(left_fg_window_start, left_fg_window_end)
 
-    fg_f_y = [fine_grid.es[i] for i in
-            range(left_fg_window_start, left_fg_window_end)]
+    fg_f_y = [fine_grid.es[i] for i in left_fg_window_indices]
     fg_f_y_xs = [fine_grid.x0 + (i + 0.5) * fine_grid.dx for i in
-            range(left_fg_window_start, left_fg_window_end)]
+            left_fg_window_indices]
 
-    fg_f_z = [fine_grid.bs[i]*1j for i in
-            range(left_fg_window_start, left_fg_window_end)]
+    fg_f_z = [fine_grid.bs[i]*1j for i in left_fg_window_indices]
     fg_f_z_xs = [fine_grid.x0 + i * fine_grid.dx for i in
-            range(left_fg_window_start, left_fg_window_end)]
+            left_fg_window_indices]
 
     apply_M = lambda (x, v): v * M((x - left_fg_window_x0) / left_fg_window_dx)
     fg_f_m_y = map(apply_M, zip(fg_f_y_xs, fg_f_y))
     fg_f_m_z = map(apply_M, zip(fg_f_z_xs, fg_f_z))
 
-    for i in range(left_fg_window_start, left_fg_window_end):
-        fine_grid.es[i] -= fg_f_m_y[i - left_fg_window_start].real
-        fine_grid.bs[i] -= fg_f_m_z[i - left_fg_window_start].imag
+    # for i in left_fg_window_indices:
+        # fine_grid.es[i] -= fg_f_m_y[i - left_fg_window_start].real
+        # fine_grid.bs[i] -= fg_f_m_z[i - left_fg_window_start].imag
 
     # - compute Fourier transforms of F_m and filter them
     fourier_cg_f_m_y = np.fft.fft(cg_f_m_y)
     fourier_cg_f_m_z = np.fft.fft(cg_f_m_z)
-    # -- values from coarse grid: zero values on non-negative wavenumbers
-    for i in range((fourier_cg_f_m_y.size + 1) // 2):
-        fourier_cg_f_m_y[i], fourier_cg_f_m_z[i] = (0, 0)
+    # -- values from coarse grid: only leave positive wavenumbers
+    fourier_cg_f_m_y[0], fourier_cg_f_m_z[0] = (0j, 0j)
+    for i in range((fourier_cg_f_m_y.size + 1) // 2, fourier_cg_f_m_y.size):
+        fourier_cg_f_m_y[i], fourier_cg_f_m_z[i] = (0j, 0j)
 
     fourier_fg_f_m_y = np.fft.fft(fg_f_m_y)
     fourier_fg_f_m_z = np.fft.fft(fg_f_m_z)
-    # -- values from fine grid: zero values on non-positive wavenumbers
-    fourier_fg_f_m_y[0], fourier_fg_f_m_z[0] = (0, 0)
-    for i in range((fourier_fg_f_m_y.size + 1) // 2, fourier_fg_f_m_y.size):
-        fourier_fg_f_m_y[i], fourier_fg_f_m_z[i] = (0, 0)
+    # -- values from fine grid: only leave negative wavenumbers
+    for i in range((fourier_fg_f_m_y.size + 1) // 2):
+        fourier_fg_f_m_y[i], fourier_fg_f_m_z[i] = (0j, 0j)
     
     # - compute inverse transforms and add results to destination grids
     # -- inserting into fine grid
-    cg_f_m_y_prime = np.concatenate(([0], np.fft.ifft(fourier_cg_f_m_y), [0]))
+    cg_f_m_y_prime = np.concatenate(([0j], np.fft.ifft(fourier_cg_f_m_y), [0j]))
     cg_f_m_y_prime_xs = [
             (coarse_grid.x0 +
                 (left_cg_window_start - 0.5 + i) * coarse_grid.dx)
             for i in range(len(cg_f_m_y_prime))]
-    cg_f_m_z_prime = np.concatenate((np.fft.ifft(fourier_cg_f_m_z), [0]))
+    cg_f_m_z_prime = np.concatenate((np.fft.ifft(fourier_cg_f_m_z), [0j]))
     cg_f_m_z_prime_xs = [
             (coarse_grid.x0 +
                 (left_cg_window_start + i) * coarse_grid.dx)
-            for i in range(len(cg_f_m_y_prime))]
+            for i in range(len(cg_f_m_z_prime))]
 
     def interpolate(x, grid):
         intervals = zip(grid[:-1], grid[1:])
@@ -172,27 +168,27 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
             if x1 <= x and x < x2:
                 return (x - x1) * (v1 - v2) / (x1 - x2) + v1
 
-    for i in range(left_fg_window_end - left_fg_window_start):
-        fine_grid.es[left_fg_window_start + i] += interpolate(
-                fine_grid.x0 + (left_fg_window_start + i + 0.5) * fine_grid.dx,
+    for i in left_fg_window_indices:
+        fine_grid.es[i] += interpolate(
+                fine_grid.x0 + (i + 0.5) * fine_grid.dx,
                 zip(cg_f_m_y_prime_xs, cg_f_m_y_prime)
         ).real
-        fine_grid.bs[left_fg_window_start + i] += interpolate(
-                fine_grid.x0 + (left_fg_window_start + i) * fine_grid.dx,
+        fine_grid.bs[i] += interpolate(
+                fine_grid.x0 + i * fine_grid.dx,
                 zip(cg_f_m_z_prime_xs, cg_f_m_z_prime)
         ).imag
 
     # -- inserting into coarse grid
-    half_ref_factor = ref_factor // 2
-    fg_f_m_y_prime = np.fft.ifft(fourier_fg_f_m_y)
-    fg_f_m_z_prime = np.fft.ifft(fourier_fg_f_m_z)
-    for i in range(left_cg_window_end - left_cg_window_start):
-        coarse_grid.es[left_cg_window_start + i] += (
-                fg_f_m_y_prime[i * ref_factor].real
-        )
-        coarse_grid.bs[left_cg_window_start + i] += (
-                fg_f_m_z_prime[half_ref_factor + i * ref_factor].imag
-        )
+    # half_ref_factor = ref_factor // 2
+    # fg_f_m_y_prime = np.fft.ifft(fourier_fg_f_m_y)
+    # fg_f_m_z_prime = np.fft.ifft(fourier_fg_f_m_z)
+    # for i in range(left_cg_window_end - left_cg_window_start):
+        # coarse_grid.es[left_cg_window_start + i] += (
+                # fg_f_m_y_prime[half_ref_factor + i * ref_factor].real
+        # )
+        # coarse_grid.bs[left_cg_window_start + i] += (
+                # fg_f_m_z_prime[i * ref_factor].imag
+        # )
 
     # right interface
     # not yet implemented
@@ -271,7 +267,8 @@ def simulate(ref_factor):
             'left_cg_window_start': fine_grid_idx - defs.FFT_WINDOW_SIZE,
             'left_cg_window_end': fine_grid_idx,
             'left_fg_window_start': 1 + defs.PML_SIZE,
-            'left_fg_window_end': 1 + defs.PML_SIZE + defs.FFT_WINDOW_SIZE
+            'left_fg_window_end': (1 + defs.PML_SIZE +
+                defs.FFT_WINDOW_SIZE * ref_factor)
     }
 
     generate_b, generate_e = get_field_generator(coarse_grid)
