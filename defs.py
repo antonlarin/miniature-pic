@@ -23,10 +23,11 @@ x0 = 0
 PML_SIZE = 12
 
 FINE_GRID_SIZE = 130 * resolution_multiplier # in coarse grid cell units
-FFT_WINDOW_SIZE = 29
+FFT_WINDOW_SIZE = 32
+TRANSFER_RATIO = .10
 AUX_GRID_SIZE = 1
 
-ITERATIONS = courant_factor * resolution_multiplier * 600
+ITERATIONS = courant_factor * resolution_multiplier * 400
 OUTPUT_PERIOD = courant_factor * resolution_multiplier * 12
 
 
@@ -42,13 +43,17 @@ def pulse(x, t):
 # source fields
 def left_b(x, t):
     return pulse(x, t)
+    # return 0
 
 def left_e(x, t):
     return pulse(x, t)
+    # return 0
 
 def right_b(x, t):
     return 0
+    # return -pulse(-x, t)
 
 def right_e(x, t):
     return 0
+    # return pulse(-x, t)
 
