@@ -93,166 +93,135 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params, t):
     ref_factor = transfer_params['ref_factor']
 
     # left interface
-    # - compute F_m and substract them from the source grids
+    # - compute alternative variables and substract them from source grid
     # -- on coarse grid
     left_cg_window_x0 = coarse_grid.x0 + coarse_grid.dx * left_cg_window_start
     left_cg_window_x1 = coarse_grid.x0 + coarse_grid.dx * left_cg_window_end
     left_cg_window_dx = left_cg_window_x1 - left_cg_window_x0
     left_cg_window_indices = range(left_cg_window_start, left_cg_window_end)
 
-    r2l_values = np.zeros(2 * defs.FFT_WINDOW_SIZE + 1)
+    l2r_values = np.zeros(2 * defs.FFT_WINDOW_SIZE + 1)
     common_coeff = 0.5 * defs.TRANSFER_RATIO
     for i in left_cg_window_indices:
         local_i = i - left_cg_window_start
         mask = M(local_i / defs.FFT_WINDOW_SIZE)
-        coeff = common_coeff * mask
-        r2l_values[2 * local_i] = coeff * (coarse_grid.bs[i] +
+        coeff = common_coeff #* mask
+        l2r_values[2 * local_i] = coeff * (coarse_grid.bs[i] +
                 lagrange3_middle(coarse_grid.es[i - 2],
                     coarse_grid.es[i - 1],
                     coarse_grid.es[i],
                     coarse_grid.es[i + 1]))
-        coarse_grid.bs[i] -= r2l_values[2 * local_i]
+        coarse_grid.bs[i] -= l2r_values[2 * local_i]
 
         mask = M((local_i + .5) / defs.FFT_WINDOW_SIZE)
-        coeff = common_coeff * mask
-        r2l_values[2 * local_i + 1] = coeff * (coarse_grid.es[i] +
+        coeff = common_coeff #* mask
+        l2r_values[2 * local_i + 1] = coeff * (coarse_grid.es[i] +
                 lagrange3_middle(coarse_grid.bs[i - 1],
                     coarse_grid.bs[i],
                     coarse_grid.bs[i + 1],
                     coarse_grid.bs[i + 2]))
-        coarse_grid.es[i] -= r2l_values[2 * local_i + 1]
+        coarse_grid.es[i] -= l2r_values[2 * local_i + 1]
 
     mask = 0
-    coeff = common_coeff * mask
-    r2l_values[-1] = coeff * (coarse_grid.bs[left_cg_window_end] +
+    coeff = common_coeff #* mask
+    l2r_values[-1] = coeff * (coarse_grid.bs[left_cg_window_end] +
             lagrange3_middle(coarse_grid.es[left_cg_window_end - 2],
                 coarse_grid.es[left_cg_window_end - 1],
                 coarse_grid.es[left_cg_window_end],
                 coarse_grid.es[left_cg_window_end + 1]))
-    coarse_grid.bs[left_cg_window_end] -= r2l_values[-1]
-
-    # cg_f_y = [coarse_grid.es[i] for i in left_cg_window_indices]
-    # cg_f_y_xs = [coarse_grid.x0 + (i + 0.5) * coarse_grid.dx for i in
-            # left_cg_window_indices]
-# 
-    # cg_f_z = [coarse_grid.bs[i]*1j for i in left_cg_window_indices]
-    # cg_f_z_xs = [coarse_grid.x0 + i * coarse_grid.dx for i in
-            # left_cg_window_indices]
-# 
-    # apply_M = lambda (x, v): v * M((x - left_cg_window_x0) / left_cg_window_dx)
-    # cg_f_m_y = map(apply_M, zip(cg_f_y_xs, cg_f_y))
-    # cg_f_m_z = map(apply_M, zip(cg_f_z_xs, cg_f_z))
-# 
-    # for i in left_cg_window_indices:
-        # coarse_grid.es[i] -= cg_f_m_y[i - left_cg_window_start].real
-        # coarse_grid.bs[i] -= cg_f_m_z[i - left_cg_window_start].imag
+    coarse_grid.bs[left_cg_window_end] -= l2r_values[-1]
 
     # -- on fine grid
     left_fg_window_x0 = fine_grid.x0 + fine_grid.dx * left_fg_window_start
     left_fg_window_x1 = fine_grid.x0 + fine_grid.dx * left_fg_window_end
     left_fg_window_dx = left_fg_window_x1 - left_fg_window_x0
     left_fg_window_indices = range(left_fg_window_start, left_fg_window_end)
+    left_fg_window_sparse_indices = range(left_fg_window_start,
+            left_fg_window_end, ref_factor)
 
+    r2l_values = np.zeros(2 * defs.FFT_WINDOW_SIZE + 1)
+    common_coeff = 0.5 * defs.TRANSFER_RATIO
+    for i in left_fg_window_sparse_indices:
+        local_i = i - left_fg_window_start
+        local_sparse_i = local_i // ref_factor
+        mask = M(local_i / (defs.FFT_WINDOW_SIZE * ref_factor))
+        coeff = common_coeff #* mask
+        r2l_values[2 * local_sparse_i] = coeff * (-fine_grid.bs[i] +
+                lagrange3_middle(fine_grid.es[i - 2],
+                    fine_grid.es[i - 1],
+                    fine_grid.es[i],
+                    fine_grid.es[i + 1]))
+        fine_grid.bs[i] += r2l_values[2 * local_sparse_i]
+
+        half_ref_factor = ref_factor // 2
+        mask = M((local_i + half_ref_factor + .5) /
+                (defs.FFT_WINDOW_SIZE * ref_factor))
+        coeff = common_coeff #* mask
+        r2l_values[2 * local_sparse_i + 1] = coeff * (
+                fine_grid.es[i + half_ref_factor] -
+                lagrange3_middle(fine_grid.bs[i + half_ref_factor - 1],
+                    fine_grid.bs[i + half_ref_factor],
+                    fine_grid.bs[i + half_ref_factor + 1],
+                    fine_grid.bs[i + half_ref_factor + 2]))
+        fine_grid.es[i + 1] -= r2l_values[2 * local_sparse_i + 1]
+
+    mask = 0
+    coeff = common_coeff #* mask
+    r2l_values[-1] = coeff * (-fine_grid.bs[left_fg_window_end] +
+            lagrange3_middle(fine_grid.es[left_fg_window_end - 2],
+                fine_grid.es[left_fg_window_end - 1],
+                fine_grid.es[left_fg_window_end],
+                fine_grid.es[left_fg_window_end + 1]))
+    fine_grid.bs[left_fg_window_end] += r2l_values[-1]
+
+    # - insert alternative variables into target grids
+    # -- in fine grid
     for i in left_fg_window_indices:
         un_i = 2 * (i - left_fg_window_start)
         src_i = un_i // ref_factor
         right_coeff = (un_i - src_i * ref_factor) / ref_factor
         left_coeff = 1. - right_coeff
-        fine_grid.bs[i] += (left_coeff * r2l_values[src_i] +
-                right_coeff * r2l_values[src_i + 1])
+        fine_grid.bs[i] += (left_coeff * l2r_values[src_i] +
+                right_coeff * l2r_values[src_i + 1])
         un_i += 1
         src_i = un_i // ref_factor
         right_coeff = (un_i - src_i * ref_factor) / ref_factor
         left_coeff = 1. - right_coeff
-        fine_grid.es[i] += (left_coeff * r2l_values[src_i] +
-                right_coeff * r2l_values[src_i + 1])
-    fine_grid.bs[left_fg_window_end] += r2l_values[-1]
+        fine_grid.es[i] += (left_coeff * l2r_values[src_i] +
+                right_coeff * l2r_values[src_i + 1])
 
-    # fg_f_y = [fine_grid.es[i] for i in left_fg_window_indices]
-    # fg_f_y_xs = [fine_grid.x0 + (i + 0.5) * fine_grid.dx for i in
-            # left_fg_window_indices]
-# 
-    # fg_f_z = [fine_grid.bs[i]*1j for i in left_fg_window_indices]
-    # fg_f_z_xs = [fine_grid.x0 + i * fine_grid.dx for i in
-            # left_fg_window_indices]
-# 
-    # apply_M = lambda (x, v): v * M((x - left_fg_window_x0) / left_fg_window_dx)
-    # fg_f_m_y = map(apply_M, zip(fg_f_y_xs, fg_f_y))
-    # fg_f_m_z = map(apply_M, zip(fg_f_z_xs, fg_f_z))
+    fine_grid.bs[left_fg_window_end] += l2r_values[-1]
 
-    # for i in left_fg_window_indices:
-        # fine_grid.es[i] -= fg_f_m_y[i - left_fg_window_start].real
-        # fine_grid.bs[i] -= fg_f_m_z[i - left_fg_window_start].imag
+    # -- in coarse grid
+    fourier_r2l_values = np.fft.fft(r2l_values)
+    freqs = np.fft.fftfreq(len(r2l_values), 0.5 * coarse_grid.dx)
 
-    # - compute Fourier transforms of F_m and filter them
-    # fourier_cg_f_m_y = np.fft.fft(cg_f_m_y)
-    # fourier_cg_f_m_z = np.fft.fft(cg_f_m_z)
-    # fourier_fg_f_m_y = np.fft.fft(fg_f_m_y)
-    # fourier_fg_f_m_z = np.fft.fft(fg_f_m_z)
+    lowpass = lambda (f, v): 0j if abs(f) > (0.25 / coarse_grid.dx) else v
+    filtered_r2l_values = map(lowpass, zip(freqs, fourier_r2l_values))
+    r2l_values_prime = map(lambda z: z.real, np.fft.ifft(filtered_r2l_values))
 
     # if t % defs.OUTPUT_PERIOD == 0:
         # plt.clf()
-        # freqs = np.fft.fftfreq(len(cg_f_m_y), coarse_grid.dx)
-        # plt.scatter(freqs, map(abs, fourier_cg_f_m_y), label='$F=E_y$')
-        # plt.scatter(freqs, map(abs, fourier_cg_f_m_z), 20, 'r', label='$F=iB_z$')
+        # plt.scatter(freqs, map(abs, fourier_r2l_values), 20, 'b',
+                # label=r'$\frac{E_y - B_z}{2}$')
+        # plt.scatter(freqs, map(abs, filtered_r2l_values), 20, 'r',
+                # label=r'$H\left(\frac{E_y - B_z}{2}\right)$')
         # plt.vlines((-0.25/coarse_grid.dx, 0.25/coarse_grid.dx), 0, 10, 'g',
                 # label=r'$\frac{k_x}{2\pi}=\frac{1}{4\Delta x}$')
         # plt.yscale('log')
         # plt.ylim(1e-10, 10)
         # plt.xlabel(r'$\frac{k_x}{2\pi}$')
-        # plt.legend(loc='best')
         # plt.ylabel(r'$\left|\mathcal{F}(F)\right|$')
+        # plt.legend(loc='best')
         # plt.savefig('fourier{0:06d}.png'.format(t // defs.OUTPUT_PERIOD))
 
-    # -- values from coarse grid: only leave positive wavenumbers
-    # fourier_cg_f_m_y[0], fourier_cg_f_m_z[0] = (0j, 0j)
-    # for i in range((fourier_cg_f_m_y.size + 1) // 2, fourier_cg_f_m_y.size):
-        # fourier_cg_f_m_y[i], fourier_cg_f_m_z[i] = (0j, 0j)
+    for i in left_cg_window_indices:
+        un_i = 2 * (i - left_cg_window_start)
+        coarse_grid.bs[i] -= r2l_values_prime[un_i]
 
-    # -- values from fine grid: only leave negative wavenumbers
-    # for i in range((fourier_fg_f_m_y.size + 1) // 2):
-        # fourier_fg_f_m_y[i], fourier_fg_f_m_z[i] = (0j, 0j)
-    
-    # - compute inverse transforms and add results to destination grids
-    # -- inserting into fine grid
-    # cg_f_m_y_prime = np.concatenate(([0j], np.fft.ifft(fourier_cg_f_m_y), [0j]))
-    # cg_f_m_y_prime_xs = [
-            # (coarse_grid.x0 +
-                # (left_cg_window_start - 0.5 + i) * coarse_grid.dx)
-            # for i in range(len(cg_f_m_y_prime))]
-    # cg_f_m_z_prime = np.concatenate((np.fft.ifft(fourier_cg_f_m_z), [0j]))
-    # cg_f_m_z_prime_xs = [
-            # (coarse_grid.x0 +
-                # (left_cg_window_start + i) * coarse_grid.dx)
-            # for i in range(len(cg_f_m_z_prime))]
+        coarse_grid.es[i] += r2l_values_prime[un_i + 1]
 
-    # def interpolate(x, grid):
-        # intervals = zip(grid[:-1], grid[1:])
-        # for ((x1, v1), (x2, v2)) in intervals:
-            # if x1 <= x and x < x2:
-                # return (x - x1) * (v1 - v2) / (x1 - x2) + v1
-
-    # for i in left_fg_window_indices:
-        # fine_grid.es[i] += interpolate(
-                # fine_grid.x0 + (i + 0.5) * fine_grid.dx,
-                # zip(cg_f_m_y_prime_xs, cg_f_m_y_prime)
-        # ).real
-        # fine_grid.bs[i] += interpolate(
-                # fine_grid.x0 + i * fine_grid.dx,
-                # zip(cg_f_m_z_prime_xs, cg_f_m_z_prime)
-        # ).imag
-
-    # -- inserting into coarse grid
-    # half_ref_factor = ref_factor // 2
-    # fg_f_m_y_prime = np.fft.ifft(fourier_fg_f_m_y)
-    # fg_f_m_z_prime = np.fft.ifft(fourier_fg_f_m_z)
-    # for i in range(left_cg_window_end - left_cg_window_start):
-        # coarse_grid.es[left_cg_window_start + i] += (
-                # fg_f_m_y_prime[half_ref_factor + i * ref_factor].real
-        # )
-        # coarse_grid.bs[left_cg_window_start + i] += (
-                # fg_f_m_z_prime[i * ref_factor].imag
-        # )
+    coarse_grid.bs[left_cg_window_end] -= r2l_values_prime[-1]
 
     # right interface
     # not yet implemented
@@ -328,11 +297,13 @@ def simulate(ref_factor):
             defs.COARSE_GRID_SIZE - 2, coarse_grid))
 
     # fine grid
-    fine_grid_idx = (defs.COARSE_GRID_SIZE - defs.FINE_GRID_SIZE) // 2
-    fine_x0 = (defs.x0 + (fine_grid_idx - defs.FFT_WINDOW_SIZE) * defs.dx -
-            (defs.PML_SIZE + 1) * defs.dx / ref_factor)
+    fine_grid_start = (defs.COARSE_GRID_SIZE - defs.FINE_GRID_SIZE) // 2
+    fine_grid_end = fine_grid_start + defs.FINE_GRID_SIZE
+    fine_x0 = (defs.x0 + (fine_grid_start - defs.FFT_WINDOW_SIZE) * defs.dx -
+            defs.dx / ref_factor)
+    fine_fft_window_size = defs.FFT_WINDOW_SIZE * ref_factor
     fine_grid_size = (defs.FINE_GRID_SIZE * ref_factor +
-        2 * (defs.PML_SIZE + 1 + defs.FFT_WINDOW_SIZE * ref_factor))
+        2 * (1 + fine_fft_window_size))
 
     fine_grid = Grid(fine_grid_size, fine_x0, defs.dx / ref_factor, defs.dt)
 
@@ -340,11 +311,15 @@ def simulate(ref_factor):
     transfer_params = {
             'ref_factor': ref_factor,
 
-            'left_cg_window_start': fine_grid_idx - defs.FFT_WINDOW_SIZE,
-            'left_cg_window_end': fine_grid_idx,
-            'left_fg_window_start': 1 + defs.PML_SIZE,
-            'left_fg_window_end': (1 + defs.PML_SIZE +
-                defs.FFT_WINDOW_SIZE * ref_factor)
+            'left_cg_window_start': fine_grid_start - defs.FFT_WINDOW_SIZE,
+            'left_cg_window_end': fine_grid_start,
+            'left_fg_window_start': 1,
+            'left_fg_window_end': 1 + defs.FFT_WINDOW_SIZE * ref_factor,
+
+            'right_cg_window_start': fine_grid_end,
+            'right_cg_window_end': fine_grid_end + defs.FFT_WINDOW_SIZE,
+            'right_fg_window_start': fine_grid_size - 1 - fine_fft_window_size,
+            'right_fg_window_end': fine_grid_size - 1
     }
 
     generate_b, generate_e = get_field_generator(coarse_grid)
@@ -356,35 +331,27 @@ def simulate(ref_factor):
         stdout.flush()
 
         cg_skip = lambda i: (
-                i >= fine_grid_idx + defs.PML_SIZE and
-                i < fine_grid_idx + defs.FINE_GRID_SIZE -
-                    defs.PML_SIZE)
+                i >= fine_grid_start + defs.PML_SIZE and
+                i < fine_grid_end - defs.PML_SIZE)
 
         # update second half b
-        update_b(coarse_grid, False) #, skip=cg_skip)
+        update_b(coarse_grid, False, skip=cg_skip)
         update_b(fine_grid, False)
         generate_b(t * coarse_grid.dt)
 
         # update e
-        update_e(coarse_grid) #, skip=cg_skip)
+        update_e(coarse_grid, skip=cg_skip)
         update_e(fine_grid)
         generate_e((t + 0.5) * coarse_grid.dt)
         
         # update first half b
-        update_b(coarse_grid, True) #, skip=cg_skip)
+        update_b(coarse_grid, True, skip=cg_skip)
         update_b(fine_grid, True)
 
         conduct_transfers(coarse_grid, fine_grid, transfer_params, t)
 
         if t % defs.OUTPUT_PERIOD == 0:
             build_plot(coarse_grid, fine_grid, t // defs.OUTPUT_PERIOD)
-
-        # if t == defs.ITERATIONS - 1:
-            # pairs = [(defs.x0 + defs.dx * i, coarse_grid.bs[i]) for i in
-                    # range(coarse_grid.size)]
-            # pairs = filter(lambda (x, _): x > 0.4 and x < 0.8, pairs)
-            # values = map(abs, zip(*pairs)[1])
-            # print(max(values))
 
         stdout.write('\b' * len(t_str))
 

@@ -27,7 +27,7 @@ FFT_WINDOW_SIZE = 32
 TRANSFER_RATIO = .10
 AUX_GRID_SIZE = 1
 
-ITERATIONS = courant_factor * resolution_multiplier * 400
+ITERATIONS = courant_factor * resolution_multiplier * 600
 OUTPUT_PERIOD = courant_factor * resolution_multiplier * 12
 
 
