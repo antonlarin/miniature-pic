@@ -163,7 +163,7 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params, t):
                     fine_grid.bs[i + half_ref_factor],
                     fine_grid.bs[i + half_ref_factor + 1],
                     fine_grid.bs[i + half_ref_factor + 2]))
-        fine_grid.es[i + 1] -= r2l_values[2 * local_sparse_i + 1]
+        fine_grid.es[i + half_ref_factor] -= r2l_values[2 * local_sparse_i + 1]
 
     mask = 0
     coeff = common_coeff #* mask

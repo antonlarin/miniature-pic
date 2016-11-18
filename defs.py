@@ -7,7 +7,7 @@ EM = 0.910938215e-27
 E = -4.80320427e-10
 
 # run setup
-resolution_multiplier = 1
+resolution_multiplier = 2
 courant_factor = 3
 COARSE_GRID_SIZE = 384 * resolution_multiplier
 dx = 6.0 / COARSE_GRID_SIZE
@@ -17,6 +17,7 @@ angular_frequency = 2 * PI * C / wavelength
 periods = 4
 pulse_duration = periods * wavelength / C
 pulse_delay = 4 * pulse_duration
+pulse_width = 16 * wavelength
 dt = dx / (C * courant_factor)
 x0 = 0
 
@@ -27,17 +28,21 @@ FFT_WINDOW_SIZE = 32
 TRANSFER_RATIO = .10
 AUX_GRID_SIZE = 1
 
-ITERATIONS = courant_factor * resolution_multiplier * 600
+ITERATIONS = courant_factor * resolution_multiplier * 700
 OUTPUT_PERIOD = courant_factor * resolution_multiplier * 12
 
 
 # pulse description
-def pulse_longitudinal_profile(t):
-    return math.exp(-((t - pulse_delay)/pulse_duration)**2 * 2 * math.log(2))
+def pulse_longitudinal_profile(x, t):
+    def block(x, xmin, xmax):
+        return 1 if xmin <= x and x <= xmax else 0
+
+    arg = (x - C * t + pulse_width) / pulse_width * math.pi
+    return block(arg, 0, math.pi) * math.sin(arg)**2
 
 def pulse(x, t):
     return (math.sin(wavenumber * x - angular_frequency * t) *
-            pulse_longitudinal_profile(t))
+            pulse_longitudinal_profile(x, t))
 
 
 # source fields
