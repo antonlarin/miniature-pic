@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
 from __future__ import print_function, division
-from sys import stdout, stderr, argv, exit
+import os, sys
 import numpy as np
 import matplotlib.pyplot as plt
 import math
+import argparse
 
 import defs
 from grid import Grid
@@ -180,7 +181,7 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params, t):
 
 
 # utility
-def build_plot(coarse_grid, fine_grid, idx):
+def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
     xs = [coarse_grid.x0 + coarse_grid.dx * i
             for i in range(len(coarse_grid.bs))]
     fine_xs = [fine_grid.x0 + fine_grid.dx * i
@@ -228,7 +229,8 @@ def build_plot(coarse_grid, fine_grid, idx):
     plt.ylim(1e-10, 1)
     plt.xlim(xs[0], xs[-1])
 
-    plt.savefig('{0:06d}.png'.format(idx), dpi=120)
+    filename_pattern = output_dir + os.sep + '{0:06d}.png'
+    plt.savefig(filename_pattern.format(pic_idx), dpi=120)
 
 
 def calculate_energy(coarse_grid, fine_grid, ref_factor, transfer_params):
@@ -299,7 +301,8 @@ def calculate_energy(coarse_grid, fine_grid, ref_factor, transfer_params):
             right_transfer_region_energy)
 
 def plot_energies(coarse_grid_energies, fine_grid_energies,
-        left_transfer_region_energies, right_transfer_region_energies):
+        left_transfer_region_energies, right_transfer_region_energies,
+        output_dir):
     plt.clf()
     default_fig_size = plt.gcf().get_size_inches()
     plt.gcf().set_size_inches(8, 12)
@@ -322,23 +325,12 @@ def plot_energies(coarse_grid_energies, fine_grid_energies,
     plt.xlabel('iterations')
     plt.ylabel(r'$\propto$ energy')
     plt.legend(loc='best')
-    plt.savefig('energy.pdf')
+    plt.savefig(output_dir + os.sep + 'energy.pdf')
+
     plt.gcf().set_size_inches(default_fig_size)
 
 
-def parse_args():
-    if len(argv) < 2:
-        print('No factor passed\n\tUSAGE: ./hst.py ref_factor', file=stderr)
-        exit(1)
-
-    try:
-        ref_factor = int(argv[1])
-    except ValueError:
-        print('Couldn\'t parse ref_factor', file=stderr)
-        exit(1)
-    return ref_factor
-
-def simulate(ref_factor):
+def simulate(ref_factor, output_dir):
     # coarse grid
     coarse_grid = Grid(defs.COARSE_GRID_SIZE, defs.x0, defs.dx, defs.dt)
     coarse_grid.add_pml(Pml(defs.PML_SIZE, 1, coarse_grid))
@@ -378,11 +370,11 @@ def simulate(ref_factor):
     left_transfer_region_energies = []
     right_transfer_region_energies = []
 
-    stdout.write('iteration ')
+    sys.stdout.write('iteration ')
     for t in range(defs.ITERATIONS):
         t_str = '{}'.format(t)
-        stdout.write(t_str)
-        stdout.flush()
+        sys.stdout.write(t_str)
+        sys.stdout.flush()
 
         cg_skip = lambda i: (
                 i >= fine_grid_start + defs.PML_SIZE and
@@ -405,7 +397,8 @@ def simulate(ref_factor):
         conduct_transfers(coarse_grid, fine_grid, transfer_params, t)
 
         if t % defs.OUTPUT_PERIOD == 0:
-            build_plot(coarse_grid, fine_grid, t // defs.OUTPUT_PERIOD)
+            build_plot(coarse_grid, fine_grid, t // defs.OUTPUT_PERIOD,
+                    output_dir)
 
         if t % defs.ENERGY_OUTPUT_PERIOD == 0:
             cg_en, fg_en, ltr_en, rtr_en = calculate_energy(
@@ -416,15 +409,21 @@ def simulate(ref_factor):
             right_transfer_region_energies.append(rtr_en)
 
 
-        stdout.write('\b' * len(t_str))
+        sys.stdout.write('\b' * len(t_str))
 
-    stdout.write('\n')
+    sys.stdout.write('\n')
     plot_energies(
             coarse_grid_energies, fine_grid_energies,
-            left_transfer_region_energies, right_transfer_region_energies)
+            left_transfer_region_energies, right_transfer_region_energies,
+            output_dir)
 
 
 if __name__ == '__main__':
-    ref_factor = parse_args()
-    simulate(ref_factor)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("ref_factor", help="fine grid refinement factor",
+            type=int)
+    parser.add_argument("output_dir", help="output directory")
+    args = parser.parse_args()
+
+    simulate(args.ref_factor, args.output_dir)
 
