@@ -1,3 +1,9 @@
+# Vim
+*.sw?
+
+# Python
 *.pyc
-*.swp
+
+# macOS
+.DS_Store
 
