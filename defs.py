@@ -23,13 +23,17 @@ x0 = 0
 PML_SIZE = 12
 
 FINE_GRID_SIZE = 130 * resolution_multiplier # in coarse grid cell units
-FFT_WINDOW_SIZE = 16 * resolution_multiplier
-TRANSFER_RATIO = 0.2
-# AUX_GRID_SIZE = 1
 
-ITERATIONS = int(80 * wavelength / C / dt)
+
+ITERATIONS = int(90 * wavelength / C / dt)
 OUTPUT_PERIOD = courant_factor * resolution_multiplier * 12
 ENERGY_OUTPUT_PERIOD = 1 # courant_factor * resolution_multiplier * 8
+
+
+FFT_WINDOW_SIZE = 16 * resolution_multiplier
+TRANSFER_RATIO = 0.2
+def transfer_mask(x):
+    return math.sin(PI * x) ** 2
 
 # pulse description
 def pulse_longitudinal_profile(x, t):

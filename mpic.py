@@ -80,10 +80,6 @@ def get_field_generator(coarse_grid):
 
 
 # transfers
-def M(x):
-    return math.sin(defs.PI * x) ** 2
-
-
 def lagrange3_middle(f0, f1, f2, f3):
     return (-f0 + 9*f1 + 9*f2 - f3) / 16
 
@@ -97,9 +93,43 @@ def resize_fspace_buffer(buffer, new_size):
         nonnegative_freq_count = (new_size + 1) // 2
         negative_freq_count = new_size // 2
         resized_buffer = np.delete(buffer,
-                range(nonnegative_freq_count, -negative_freq_count))
+                range(nonnegative_freq_count,
+                    len(buffer) - negative_freq_count))
 
     return resized_buffer
+
+
+def fill_source_buffer(src_grid, src_indices, l2r_propagation):
+    cell_count = len(src_indices)
+    buffer_size = 2 * cell_count + 1
+    transfer_buffer = np.zeros(buffer_size)
+    common_coeff = 0.5 * defs.TRANSFER_RATIO
+    direction_coeff = 1 if l2r_propagation else -1
+
+    for i in src_indices:
+        local_i = i - src_indices[0]
+
+        mask = defs.transfer_mask(local_i / cell_count)
+        coeff = common_coeff * mask
+        transfer_buffer[2 * local_i] = coeff * (
+                direction_coeff * src_grid.bs[i] +
+                lagrange3_middle(src_grid.es[i - 2],
+                    src_grid.es[i - 1],
+                    src_grid.es[i],
+                    src_grid.es[i + 1]))
+
+        mask = defs.transfer_mask((local_i + .5) / cell_count)
+        coeff = common_coeff * mask
+        transfer_buffer[2 * local_i + 1] = coeff * (
+                src_grid.es[i] +
+                direction_coeff * lagrange3_middle(src_grid.bs[i - 1],
+                    src_grid.bs[i],
+                    src_grid.bs[i + 1],
+                    src_grid.bs[i + 2]))
+
+    # last item is zero because of sin^2 mask
+
+    return transfer_buffer
 
 
 def conduct_transfers(coarse_grid, fine_grid, transfer_params, t):
@@ -112,69 +142,64 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params, t):
     # left interface
     # - compute alternative variables and substract them from source grid
     # -- on coarse grid
-    left_cg_window_x0 = coarse_grid.x0 + coarse_grid.dx * left_cg_window_start
-    left_cg_window_x1 = coarse_grid.x0 + coarse_grid.dx * left_cg_window_end
-    left_cg_window_dx = left_cg_window_x1 - left_cg_window_x0
     left_cg_window_indices = range(left_cg_window_start, left_cg_window_end)
 
-    l2r_values = np.zeros(2 * defs.FFT_WINDOW_SIZE + 1)
-    common_coeff = 0.5 * defs.TRANSFER_RATIO
+    l2r_buffer = fill_source_buffer(coarse_grid, left_cg_window_indices, True)
     for i in left_cg_window_indices:
         local_i = i - left_cg_window_start
-        mask = M(local_i / defs.FFT_WINDOW_SIZE)
-        coeff = common_coeff * mask
-        l2r_values[2 * local_i] = coeff * (coarse_grid.bs[i] +
-                lagrange3_middle(coarse_grid.es[i - 2],
-                    coarse_grid.es[i - 1],
-                    coarse_grid.es[i],
-                    coarse_grid.es[i + 1]))
-        coarse_grid.bs[i] -= l2r_values[2 * local_i]
-
-        mask = M((local_i + .5) / defs.FFT_WINDOW_SIZE)
-        coeff = common_coeff * mask
-        l2r_values[2 * local_i + 1] = coeff * (coarse_grid.es[i] +
-                lagrange3_middle(coarse_grid.bs[i - 1],
-                    coarse_grid.bs[i],
-                    coarse_grid.bs[i + 1],
-                    coarse_grid.bs[i + 2]))
-        coarse_grid.es[i] -= l2r_values[2 * local_i + 1]
-
-    mask = 0
-    coeff = common_coeff * mask
-    l2r_values[-1] = coeff * (coarse_grid.bs[left_cg_window_end] +
-            lagrange3_middle(coarse_grid.es[left_cg_window_end - 2],
-                coarse_grid.es[left_cg_window_end - 1],
-                coarse_grid.es[left_cg_window_end],
-                coarse_grid.es[left_cg_window_end + 1]))
-    coarse_grid.bs[left_cg_window_end] -= l2r_values[-1]
+        coarse_grid.bs[i] -= l2r_buffer[2 * local_i]
+        coarse_grid.es[i] -= l2r_buffer[2 * local_i + 1]
+    coarse_grid.bs[left_cg_window_end] -= l2r_buffer[-1]
 
     # -- on fine grid
-    left_fg_window_x0 = fine_grid.x0 + fine_grid.dx * left_fg_window_start
-    left_fg_window_x1 = fine_grid.x0 + fine_grid.dx * left_fg_window_end
-    left_fg_window_dx = left_fg_window_x1 - left_fg_window_x0
     left_fg_window_indices = range(left_fg_window_start, left_fg_window_end)
-    left_fg_window_sparse_indices = range(left_fg_window_start,
-            left_fg_window_end, ref_factor)
+
+    r2l_buffer = fill_source_buffer(fine_grid, left_fg_window_indices, False)
+    for i in left_fg_window_indices:
+        local_i = i - left_fg_window_start
+        fine_grid.bs[i] += r2l_buffer[2 * local_i]
+        fine_grid.es[i] -= r2l_buffer[2 * local_i + 1]
+    fine_grid.bs[left_fg_window_end] += r2l_buffer[-1]
 
 
     # - insert alternative variables into target grids
+    cg_buffer_size = len(l2r_buffer)
+    fg_buffer_size = len(r2l_buffer)
+
     # -- in fine grid
-    l2r_values_fspace_cg = np.fft.fft(l2r_values)
-    fg_buffer_size = 2 * ref_factor * defs.FFT_WINDOW_SIZE + 1
-    l2r_values_fspace_cg *= (fg_buffer_size / len(l2r_values))
-    l2r_values_fspace_fg = resize_fspace_buffer(l2r_values_fspace_cg,
+    l2r_buffer_fspace_cg = np.fft.fft(l2r_buffer)
+    l2r_buffer_fspace_cg *= math.sqrt(fg_buffer_size * ref_factor /
+            len(l2r_buffer))
+    l2r_buffer_fspace_fg = resize_fspace_buffer(l2r_buffer_fspace_cg,
             fg_buffer_size)
-    l2r_values_fg = map(lambda z: z.real, np.fft.ifft(l2r_values_fspace_fg))
+    l2r_buffer_fg = map(lambda z: z.real, np.fft.ifft(l2r_buffer_fspace_fg))
 
     for i in left_fg_window_indices:
-        shifted_i = i - left_fg_window_start
-        fine_grid.bs[i] += l2r_values_fg[shifted_i * 2]
-        fine_grid.es[i] += l2r_values_fg[shifted_i * 2 + 1]
-    fine_grid.bs[left_fg_window_end] += l2r_values_fg[-1]
-
+        local_i = i - left_fg_window_start
+        fine_grid.bs[i] += l2r_buffer_fg[local_i * 2]
+        fine_grid.es[i] += l2r_buffer_fg[local_i * 2 + 1]
+    fine_grid.bs[left_fg_window_end] += l2r_buffer_fg[-1]
 
     # -- in coarse grid
-    # TBD
+    r2l_buffer_fspace_fg = np.fft.fft(r2l_buffer)
+    r2l_buffer_fspace_fg_energy = (
+            np.sum(map(lambda z: abs(z)**2, r2l_buffer_fspace_fg)) /
+            fg_buffer_size)
+    r2l_buffer_fspace_cg = resize_fspace_buffer(r2l_buffer_fspace_fg,
+            cg_buffer_size)
+    r2l_buffer_fspace_cg_energy = (
+            np.sum(map(lambda z: abs(z)**2, r2l_buffer_fspace_cg)) /
+            cg_buffer_size)
+    if r2l_buffer_fspace_cg_energy != 0j:
+        r2l_buffer_fspace_cg *= math.sqrt(r2l_buffer_fspace_fg_energy /
+                r2l_buffer_fspace_cg_energy / ref_factor)
+    r2l_buffer_cg = map(lambda z: z.real, np.fft.ifft(r2l_buffer_fspace_cg))
+
+    for i in left_cg_window_indices:
+        local_i = i - left_cg_window_start
+        coarse_grid.bs[i] -= r2l_buffer_cg[local_i * 2]
+        coarse_grid.es[i] += r2l_buffer_cg[local_i * 2 + 1]
+    coarse_grid.bs[left_cg_window_end] -= r2l_buffer_cg[-1]
 
     # right interface
     # not yet implemented
@@ -344,7 +369,7 @@ def simulate(ref_factor, output_dir):
             defs.dx / ref_factor)
     fine_fft_window_size = defs.FFT_WINDOW_SIZE * ref_factor
     fine_grid_size = (defs.FINE_GRID_SIZE * ref_factor +
-        2 * (1 + fine_fft_window_size))
+        2 * (2 + fine_fft_window_size))
 
     fine_grid = Grid(fine_grid_size, fine_x0, defs.dx / ref_factor, defs.dt)
 
