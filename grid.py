@@ -43,3 +43,6 @@ class Grid(object):
             result = result or pml.is_inside(i)
         return result
 
+    def x_of(self, index):
+        return self.x0 + self.dx * index
+

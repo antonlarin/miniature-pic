@@ -46,9 +46,8 @@ def update_b(grid, first_half, **kwargs):
 # field generation
 def get_field_generator(coarse_grid):
     _fieldgen_idx = defs.PML_SIZE + 1;
-    left_e_x = coarse_grid.x0 + coarse_grid.dx * (_fieldgen_idx + 0.5)
-    right_e_x = coarse_grid.x0 + coarse_grid.dx * (defs.COARSE_GRID_SIZE -
-            _fieldgen_idx - 0.5)
+    left_e_x = coarse_grid.x_of(_fieldgen_idx + 0.5)
+    right_e_x = coarse_grid.x_of(defs.COARSE_GRID_SIZE - _fieldgen_idx - 0.5)
     def generate_b(t):
         # left
         b_source(coarse_grid, _fieldgen_idx, defs.left_e(left_e_x, t),
@@ -58,9 +57,8 @@ def get_field_generator(coarse_grid):
         b_source(coarse_grid, defs.COARSE_GRID_SIZE - _fieldgen_idx,
                 defs.right_e(right_e_x, t), 'left')
 
-    left_b_x = coarse_grid.x0 + coarse_grid.dx * _fieldgen_idx
-    right_b_x = coarse_grid.x0 + coarse_grid.dx * (defs.COARSE_GRID_SIZE -
-            _fieldgen_idx)
+    left_b_x = coarse_grid.x_of(_fieldgen_idx)
+    right_b_x = coarse_grid.x_of(defs.COARSE_GRID_SIZE - _fieldgen_idx)
     def generate_e(t):
         # left
         e_source(coarse_grid, _fieldgen_idx, defs.left_b(left_b_x, t),
@@ -186,10 +184,8 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
 
 # utility
 def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
-    xs = [coarse_grid.x0 + coarse_grid.dx * i
-            for i in range(len(coarse_grid.bs))]
-    fine_xs = [fine_grid.x0 + fine_grid.dx * i
-            for i in range(len(fine_grid.bs))]
+    xs = [coarse_grid.x_of(i) for i in range(len(coarse_grid.bs))]
+    fine_xs = [fine_grid.x_of(i) for i in range(len(fine_grid.bs))]
 
     plt.clf()
     plt.gcf().set_size_inches(8, 10)
@@ -345,7 +341,7 @@ def simulate(ref_factor, output_dir):
     fine_grid_start = (defs.COARSE_GRID_SIZE - defs.FINE_GRID_SIZE) // 2
     fine_grid_end = fine_grid_start + defs.FINE_GRID_SIZE
     fine_x0 = (defs.x0 + (fine_grid_start - defs.FFT_WINDOW_SIZE) * defs.dx -
-            defs.dx / ref_factor)
+            2 * defs.dx / ref_factor)
     fine_fft_window_size = defs.FFT_WINDOW_SIZE * ref_factor
     fine_grid_size = (defs.FINE_GRID_SIZE * ref_factor +
         2 * (2 + fine_fft_window_size))
