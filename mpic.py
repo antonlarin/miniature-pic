@@ -72,10 +72,6 @@ def get_field_generator(coarse_grid):
 
 
 # transfers
-def lagrange3_middle(f0, f1, f2, f3):
-    return (-f0 + 9*f1 + 9*f2 - f3) / 16
-
-
 def resize_fspace_buffer(buffer, new_size):
     if new_size >= len(buffer):
         padding_size = new_size - len(buffer)
@@ -91,92 +87,59 @@ def resize_fspace_buffer(buffer, new_size):
     return resized_buffer
 
 
-def fill_source_buffer(src_grid, src_indices, l2r_propagation):
-    cell_count = len(src_indices)
-    buffer_size = 2 * cell_count
-    transfer_buffer = np.zeros(buffer_size)
-    common_coeff = 0.5 * defs.TRANSFER_RATIO
-    direction_coeff = 1 if l2r_propagation else -1
-
-    for i in src_indices:
-        local_i = i - src_indices[0]
-
-        mask = defs.transfer_mask(local_i / cell_count)
-        coeff = common_coeff * mask
-        transfer_buffer[2 * local_i] = coeff * (
-                direction_coeff * src_grid.bs[i] +
-                lagrange3_middle(src_grid.es[i - 2],
-                    src_grid.es[i - 1],
-                    src_grid.es[i],
-                    src_grid.es[i + 1]))
-
-        mask = defs.transfer_mask((local_i + .5) / cell_count)
-        coeff = common_coeff * mask
-        transfer_buffer[2 * local_i + 1] = coeff * (
-                src_grid.es[i] +
-                direction_coeff * lagrange3_middle(src_grid.bs[i - 1],
-                    src_grid.bs[i],
-                    src_grid.bs[i + 1],
-                    src_grid.bs[i + 2]))
-
-    return transfer_buffer
-
-
 def conduct_transfers(coarse_grid, fine_grid, transfer_params):
     left_cg_window_start = transfer_params['left_cg_window_start']
     left_cg_window_end = transfer_params['left_cg_window_end']
     left_fg_window_start = transfer_params['left_fg_window_start']
     left_fg_window_end = transfer_params['left_fg_window_end']
     ref_factor = transfer_params['ref_factor']
+    
+    left_cg_window_indices = range(left_cg_window_start, left_cg_window_end)
+    left_fg_window_indices = range(left_fg_window_start, left_fg_window_end)
+    
+    left_cg_b_mask = [defs.transfer_mask(i / defs.FFT_WINDOW_SIZE)
+                      for i in range(defs.FFT_WINDOW_SIZE)]
+    left_cg_e_mask = [defs.transfer_mask((i + 0.5) / defs.FFT_WINDOW_SIZE)
+                      for i in range(defs.FFT_WINDOW_SIZE)]
+    
+    es_shifts_cg = np.exp(
+        -1j * math.pi * np.fft.fftfreq(defs.FFT_WINDOW_SIZE))
+    es_inverse_shifts_cg = 1 / es_shifts_cg
+    es_inverse_shifts_fg = np.exp(
+        1j * math.pi * np.fft.fftfreq(defs.FFT_WINDOW_SIZE * ref_factor))
 
     # left interface
     # - compute alternative variables and substract them from source grid
     # -- on coarse grid
-    left_cg_window_indices = range(left_cg_window_start, left_cg_window_end)
+    l2r_bs = coarse_grid.bs[left_cg_window_indices]
+    l2r_es = coarse_grid.es[left_cg_window_indices]
+    
+    l2r_bs_masked = defs.TRANSFER_RATIO * np.multiply(l2r_bs, left_cg_b_mask)
+    l2r_es_masked = defs.TRANSFER_RATIO * np.multiply(l2r_es, left_cg_e_mask)
+    
+    l2r_bs_fspace = np.fft.fft(l2r_bs_masked)
+    l2r_es_fspace = np.multiply(np.fft.fft(l2r_es_masked), es_shifts_cg)
 
-    l2r_buffer = fill_source_buffer(coarse_grid, left_cg_window_indices, True)
-    for i in left_cg_window_indices:
-        local_i = i - left_cg_window_start
-        coarse_grid.bs[i] -= l2r_buffer[2 * local_i]
-        coarse_grid.es[i] -= l2r_buffer[2 * local_i + 1]
+    l2r_buffer_fspace_cg = 0.5 * (l2r_es_fspace + l2r_bs_fspace)
+    l2r_buffer_fspace_fg = ref_factor * resize_fspace_buffer(
+        l2r_buffer_fspace_cg,
+        ref_factor * defs.FFT_WINDOW_SIZE)
+    
+    substract_from_b_cg = np.fft.ifft(l2r_buffer_fspace_cg).real
+    substract_from_e_cg = np.fft.ifft(
+        np.multiply(l2r_buffer_fspace_cg, es_inverse_shifts_cg)).real
 
-    # -- on fine grid
-    left_fg_window_indices = range(left_fg_window_start, left_fg_window_end)
+    add_to_b_fg = np.fft.ifft(l2r_buffer_fspace_fg).real
+    add_to_e_fg = np.fft.ifft(
+        np.multiply(l2r_buffer_fspace_fg, es_inverse_shifts_fg)).real
 
-    r2l_buffer = fill_source_buffer(fine_grid, left_fg_window_indices, False)
-    for i in left_fg_window_indices:
-        local_i = i - left_fg_window_start
-        fine_grid.bs[i] += r2l_buffer[2 * local_i]
-        fine_grid.es[i] -= r2l_buffer[2 * local_i + 1]
+    for (local_i, i) in enumerate(left_cg_window_indices):
+        coarse_grid.bs[i] -= substract_from_b_cg[local_i]
+        coarse_grid.es[i] -= substract_from_e_cg[local_i]
 
-
-    # - insert alternative variables into target grids
-    cg_buffer_size = len(l2r_buffer)
-    fg_buffer_size = len(r2l_buffer)
-
-    # -- in fine grid
-    l2r_buffer_fspace_cg = np.fft.fft(l2r_buffer)
-    l2r_buffer_fspace_cg *= fg_buffer_size / cg_buffer_size
-    l2r_buffer_fspace_fg = resize_fspace_buffer(l2r_buffer_fspace_cg,
-            fg_buffer_size)
-    l2r_buffer_fg = map(lambda z: z.real, np.fft.ifft(l2r_buffer_fspace_fg))
-
-    for i in left_fg_window_indices:
-        local_i = i - left_fg_window_start
-        fine_grid.bs[i] += l2r_buffer_fg[local_i * 2]
-        fine_grid.es[i] += l2r_buffer_fg[local_i * 2 + 1]
-
-    # -- in coarse grid
-    r2l_buffer_fspace_fg = np.fft.fft(r2l_buffer)
-    r2l_buffer_fspace_cg = resize_fspace_buffer(r2l_buffer_fspace_fg,
-                                                cg_buffer_size)
-    r2l_buffer_fspace_cg *= cg_buffer_size / fg_buffer_size
-    r2l_buffer_cg = map(lambda z: z.real, np.fft.ifft(r2l_buffer_fspace_cg))
-
-    for i in left_cg_window_indices:
-        local_i = i - left_cg_window_start
-        coarse_grid.bs[i] -= r2l_buffer_cg[local_i * 2]
-        coarse_grid.es[i] += r2l_buffer_cg[local_i * 2 + 1]
+    for (local_i, i) in enumerate(left_fg_window_indices):
+        fine_grid.bs[i] += add_to_b_fg[local_i]
+        fine_grid.es[i] += add_to_e_fg[local_i]
 
     # right interface
     # not yet implemented
@@ -325,6 +288,7 @@ def plot_energies(coarse_grid_energies, fine_grid_energies,
     plt.xlabel('iterations')
     plt.ylabel(r'$\propto$ energy')
     plt.legend(loc='best')
+    plt.ylim(1.4, 1.6)
     plt.savefig(output_dir + os.sep + 'energy.pdf')
 
     plt.gcf().set_size_inches(default_fig_size)

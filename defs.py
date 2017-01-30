@@ -21,7 +21,6 @@ dt = dx / (C * courant_factor)
 x0 = 0
 
 PML_SIZE = 12
-
 FINE_GRID_SIZE = int(22 * wavelength / dx)
 
 
