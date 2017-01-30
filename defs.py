@@ -22,7 +22,7 @@ x0 = 0
 
 PML_SIZE = 12
 
-FINE_GRID_SIZE = 130 * resolution_multiplier # in coarse grid cell units
+FINE_GRID_SIZE = int(22 * wavelength / dx)
 
 
 ITERATIONS = int(90 * wavelength / C / dt)
