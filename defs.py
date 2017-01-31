@@ -71,4 +71,3 @@ def right_b(x, t):
 def right_e(x, t):
     return 0
     # return pulse(-x, t)
-

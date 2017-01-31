@@ -87,94 +87,123 @@ def resize_fspace_buffer(buffer, new_size):
     return resized_buffer
 
 
-def conduct_transfers(coarse_grid, fine_grid, transfer_params):
-    left_cg_window_start = transfer_params['left_cg_window_start']
-    left_cg_window_end = transfer_params['left_cg_window_end']
-    left_fg_window_start = transfer_params['left_fg_window_start']
-    left_fg_window_end = transfer_params['left_fg_window_end']
-    ref_factor = transfer_params['ref_factor']
+class Transfer:
+    def __init__(self, coarse_grid_view, fine_grid_view, fine_to_the_right):
+        self.coarse_grid_view = coarse_grid_view
+        self.fine_grid_view = fine_grid_view
+        self.direction_coeff = 1 if fine_to_the_right else -1
 
-    left_cg_window_indices = range(left_cg_window_start, left_cg_window_end)
-    left_fg_window_indices = range(left_fg_window_start, left_fg_window_end)
+        self.coarse_buffer_size = coarse_grid_view.size
+        self.fine_buffer_size = fine_grid_view.size
+        self.fspace_interpolation_factor = (
+            self.fine_buffer_size / self.coarse_buffer_size)
 
-    left_cg_b_mask = [defs.transfer_mask(i / defs.FFT_WINDOW_SIZE)
-                      for i in range(defs.FFT_WINDOW_SIZE)]
-    left_cg_e_mask = [defs.transfer_mask((i + 0.5) / defs.FFT_WINDOW_SIZE)
-                      for i in range(defs.FFT_WINDOW_SIZE)]
-    left_fg_b_mask = [
-        defs.transfer_mask(i / (ref_factor * defs.FFT_WINDOW_SIZE))
-        for i in range(defs.FFT_WINDOW_SIZE * ref_factor)]
-    left_fg_e_mask = [
-        defs.transfer_mask((i + 0.5) / (ref_factor * defs.FFT_WINDOW_SIZE))
-        for i in range(defs.FFT_WINDOW_SIZE * ref_factor)]
+        self.coarse_b_mask = [
+            defs.transfer_mask(i / self.coarse_buffer_size)
+            for i in range(self.coarse_buffer_size)]
+        self.coarse_e_mask = [
+            defs.transfer_mask((i + 0.5) / self.coarse_buffer_size)
+            for i in range(self.coarse_buffer_size)]
+        self.fine_b_mask = [
+            defs.transfer_mask(i / self.fine_buffer_size)
+            for i in range(self.fine_buffer_size)]
+        self.fine_e_mask = [
+            defs.transfer_mask((i + 0.5) / self.fine_buffer_size)
+            for i in range(self.fine_buffer_size)]
 
-    es_shifts_cg = np.exp(
-        -1j * math.pi * np.fft.fftfreq(defs.FFT_WINDOW_SIZE))
-    es_inverse_shifts_cg = 1 / es_shifts_cg
-    es_shifts_fg = np.exp(
-        -1j * math.pi * np.fft.fftfreq(defs.FFT_WINDOW_SIZE * ref_factor))
-    es_inverse_shifts_fg = 1 / es_shifts_fg
-
-
-    # left interface
-    l2r_bs = coarse_grid.bs[left_cg_window_indices]
-    l2r_es = coarse_grid.es[left_cg_window_indices]
-
-    l2r_bs_masked = defs.TRANSFER_RATIO * np.multiply(l2r_bs, left_cg_b_mask)
-    l2r_es_masked = defs.TRANSFER_RATIO * np.multiply(l2r_es, left_cg_e_mask)
-
-    l2r_bs_fspace = np.fft.fft(l2r_bs_masked)
-    l2r_es_fspace = np.multiply(np.fft.fft(l2r_es_masked), es_shifts_cg)
-
-    l2r_buffer_fspace_cg = 0.5 * (l2r_es_fspace + l2r_bs_fspace)
-    l2r_buffer_fspace_fg = ref_factor * resize_fspace_buffer(
-        l2r_buffer_fspace_cg,
-        ref_factor * defs.FFT_WINDOW_SIZE)
-
-    source_b_cg = np.fft.ifft(l2r_buffer_fspace_cg).real
-    source_e_cg = np.fft.ifft(
-        np.multiply(l2r_buffer_fspace_cg, es_inverse_shifts_cg)).real
-
-    target_b_fg = np.fft.ifft(l2r_buffer_fspace_fg).real
-    target_e_fg = np.fft.ifft(
-        np.multiply(l2r_buffer_fspace_fg, es_inverse_shifts_fg)).real
-
-    r2l_bs = fine_grid.bs[left_fg_window_indices]
-    r2l_es = fine_grid.es[left_fg_window_indices]
-
-    r2l_bs_masked = defs.TRANSFER_RATIO * np.multiply(r2l_bs, left_fg_b_mask)
-    r2l_es_masked = defs.TRANSFER_RATIO * np.multiply(r2l_es, left_fg_e_mask)
-
-    r2l_bs_fspace = np.fft.fft(r2l_bs_masked)
-    r2l_es_fspace = np.multiply(np.fft.fft(r2l_es_masked), es_shifts_fg)
-
-    r2l_buffer_fspace_fg = 0.5 * (r2l_es_fspace - r2l_bs_fspace)
-    r2l_buffer_fspace_cg = resize_fspace_buffer(
-        r2l_buffer_fspace_fg, defs.FFT_WINDOW_SIZE) / ref_factor
-
-    source_b_fg = np.fft.ifft(r2l_buffer_fspace_fg).real
-    source_e_fg = np.fft.ifft(
-        np.multiply(r2l_buffer_fspace_fg, es_inverse_shifts_fg)).real
-
-    target_b_cg = np.fft.ifft(r2l_buffer_fspace_cg).real
-    target_e_cg = np.fft.ifft(
-        np.multiply(r2l_buffer_fspace_cg, es_inverse_shifts_cg)).real
+        self.coarse_e_shifts = np.exp(
+            -1j * math.pi * np.fft.fftfreq(self.coarse_buffer_size))
+        self.coarse_e_inverse_shifts = 1 / self.coarse_e_shifts
+        self.fine_e_shifts = np.exp(
+            -1j * math.pi * np.fft.fftfreq(self.fine_buffer_size))
+        self.fine_e_inverse_shifts = 1 / self.fine_e_shifts
 
 
-    for (local_i, i) in enumerate(left_cg_window_indices):
-        coarse_grid.bs[i] += (
-            -source_b_cg[local_i] - target_b_cg[local_i])
-        coarse_grid.es[i] += (
-            -source_e_cg[local_i] + target_e_cg[local_i])
+    def get_coarse_to_fine_deltas(self):
+        bs_masked = (
+            defs.TRANSFER_RATIO *
+            np.multiply(self.coarse_grid_view.bs, self.coarse_b_mask))
+        es_masked = (
+            defs.TRANSFER_RATIO *
+            np.multiply(self.coarse_grid_view.es, self.coarse_e_mask))
 
-    for (local_i, i) in enumerate(left_fg_window_indices):
-        fine_grid.bs[i] += (
-            target_b_fg[local_i] + source_b_fg[local_i])
-        fine_grid.es[i] += (
-            target_e_fg[local_i] - source_e_fg[local_i])
+        bs_fspace = np.fft.fft(bs_masked)
+        es_fspace = np.multiply(np.fft.fft(es_masked), self.coarse_e_shifts)
 
-    # right interface
-    # not yet implemented
+        source_buffer_fspace = 0.5 * (self.direction_coeff * bs_fspace +
+                                      es_fspace)
+        target_buffer_fspace = (self.fspace_interpolation_factor *
+                                resize_fspace_buffer(source_buffer_fspace,
+                                                     self.fine_buffer_size))
+
+        source_delta_b = (-self.direction_coeff *
+                          np.fft.ifft(source_buffer_fspace).real)
+        source_delta_e = -np.fft.ifft(
+            np.multiply(source_buffer_fspace,
+                        self.coarse_e_inverse_shifts)).real
+
+        target_delta_b = (self.direction_coeff *
+                          np.fft.ifft(target_buffer_fspace).real)
+        target_delta_e = np.fft.ifft(
+            np.multiply(target_buffer_fspace,
+                        self.fine_e_inverse_shifts)).real
+
+        return (source_delta_b, source_delta_e,
+                target_delta_b, target_delta_e)
+
+
+    def get_fine_to_coarse_deltas(self):
+        bs_masked = (
+            defs.TRANSFER_RATIO *
+            np.multiply(self.fine_grid_view.bs, self.fine_b_mask))
+        es_masked = (
+            defs.TRANSFER_RATIO *
+            np.multiply(self.fine_grid_view.es, self.fine_e_mask))
+
+        bs_fspace = np.fft.fft(bs_masked)
+        es_fspace = np.multiply(np.fft.fft(es_masked), self.fine_e_shifts)
+
+        source_buffer_fspace = 0.5 * (-self.direction_coeff * bs_fspace +
+                                      es_fspace)
+        target_buffer_fspace = (
+            resize_fspace_buffer(source_buffer_fspace,
+                                 self.coarse_buffer_size) /
+            self.fspace_interpolation_factor)
+
+        source_delta_b = (self.direction_coeff *
+                          np.fft.ifft(source_buffer_fspace).real)
+        source_delta_e = -np.fft.ifft(
+            np.multiply(source_buffer_fspace,
+                        self.fine_e_inverse_shifts)).real
+
+        target_delta_b = (-self.direction_coeff *
+                          np.fft.ifft(target_buffer_fspace).real)
+        target_delta_e = np.fft.ifft(
+            np.multiply(target_buffer_fspace,
+                        self.coarse_e_inverse_shifts)).real
+
+        return (source_delta_b, source_delta_e,
+                target_delta_b, target_delta_e)
+
+
+    def perform(self):
+        (cg2fg_source_delta_b,
+         cg2fg_source_delta_e,
+         cg2fg_target_delta_b,
+         cg2fg_target_delta_e) = self.get_coarse_to_fine_deltas()
+        (fg2cg_source_delta_b,
+         fg2cg_source_delta_e,
+         fg2cg_target_delta_b,
+         fg2cg_target_delta_e) = self.get_fine_to_coarse_deltas()
+
+        self.coarse_grid_view.bs += (cg2fg_source_delta_b +
+                                     fg2cg_target_delta_b)
+        self.coarse_grid_view.es += (cg2fg_source_delta_e +
+                                     fg2cg_target_delta_e)
+        self.fine_grid_view.bs += (cg2fg_target_delta_b +
+                                   fg2cg_source_delta_b)
+        self.fine_grid_view.es += (cg2fg_target_delta_e +
+                                   fg2cg_source_delta_e)
 
 
 # utility
@@ -235,10 +264,14 @@ def calculate_energy(coarse_grid, fine_grid, ref_factor, transfer_params):
     right_transfer_region_energy = 0
 
     cg_indices = (
-            list(range(defs.PML_SIZE + 1,
-                       transfer_params['left_cg_window_start'])) +
-            list(range(transfer_params['left_cg_window_end'],
-                       transfer_params['left_cg_window_end'] + 2)))
+        list(range(defs.PML_SIZE + 1,
+                   transfer_params['left_cg_window_start'])) +
+        list(range(transfer_params['left_cg_window_end'],
+                   transfer_params['left_cg_window_end'] + 2)) +
+        list(range(transfer_params['right_cg_window_start'] - 2,
+                   transfer_params['right_cg_window_start'])) +
+        list(range(transfer_params['right_cg_window_end'],
+                   coarse_grid.size - defs.PML_SIZE - 1)))
 
     for i in cg_indices:
         e = coarse_grid.es[i]
@@ -320,7 +353,6 @@ def plot_energies(coarse_grid_energies, fine_grid_energies,
     plt.xlabel('iterations')
     plt.ylabel(r'$\propto$ energy')
     plt.legend(loc='best')
-    plt.ylim(1.4, 1.6)
     plt.savefig(output_dir + os.sep + 'energy.pdf')
 
     plt.gcf().set_size_inches(default_fig_size)
@@ -359,6 +391,19 @@ def simulate(ref_factor, output_dir):
             'right_fg_window_end': fine_grid_size - 2
     }
 
+    left_transfer = Transfer(
+        coarse_grid.slice(transfer_params['left_cg_window_start'],
+                          transfer_params['left_cg_window_end']),
+        fine_grid.slice(transfer_params['left_fg_window_start'],
+                        transfer_params['left_fg_window_end']),
+        fine_to_the_right=True)
+    right_transfer = Transfer(
+        coarse_grid.slice(transfer_params['right_cg_window_start'],
+                          transfer_params['right_cg_window_end']),
+        fine_grid.slice(transfer_params['right_fg_window_start'],
+                        transfer_params['right_fg_window_end']),
+        fine_to_the_right=False)
+
     generate_b, generate_e = get_field_generator(coarse_grid)
 
     coarse_grid_energies = []
@@ -388,7 +433,8 @@ def simulate(ref_factor, output_dir):
         update_b(coarse_grid, True, skip=cg_skip)
         update_b(fine_grid, True)
 
-        conduct_transfers(coarse_grid, fine_grid, transfer_params)
+        left_transfer.perform()
+        right_transfer.perform()
 
         if t % defs.OUTPUT_PERIOD == 0:
             build_plot(coarse_grid, fine_grid, t // defs.OUTPUT_PERIOD,
