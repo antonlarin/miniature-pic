@@ -93,30 +93,36 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
     left_fg_window_start = transfer_params['left_fg_window_start']
     left_fg_window_end = transfer_params['left_fg_window_end']
     ref_factor = transfer_params['ref_factor']
-    
+
     left_cg_window_indices = range(left_cg_window_start, left_cg_window_end)
     left_fg_window_indices = range(left_fg_window_start, left_fg_window_end)
-    
+
     left_cg_b_mask = [defs.transfer_mask(i / defs.FFT_WINDOW_SIZE)
                       for i in range(defs.FFT_WINDOW_SIZE)]
     left_cg_e_mask = [defs.transfer_mask((i + 0.5) / defs.FFT_WINDOW_SIZE)
                       for i in range(defs.FFT_WINDOW_SIZE)]
-    
+    left_fg_b_mask = [
+        defs.transfer_mask(i / (ref_factor * defs.FFT_WINDOW_SIZE))
+        for i in range(defs.FFT_WINDOW_SIZE * ref_factor)]
+    left_fg_e_mask = [
+        defs.transfer_mask((i + 0.5) / (ref_factor * defs.FFT_WINDOW_SIZE))
+        for i in range(defs.FFT_WINDOW_SIZE * ref_factor)]
+
     es_shifts_cg = np.exp(
         -1j * math.pi * np.fft.fftfreq(defs.FFT_WINDOW_SIZE))
     es_inverse_shifts_cg = 1 / es_shifts_cg
-    es_inverse_shifts_fg = np.exp(
-        1j * math.pi * np.fft.fftfreq(defs.FFT_WINDOW_SIZE * ref_factor))
+    es_shifts_fg = np.exp(
+        -1j * math.pi * np.fft.fftfreq(defs.FFT_WINDOW_SIZE * ref_factor))
+    es_inverse_shifts_fg = 1 / es_shifts_fg
+
 
     # left interface
-    # - compute alternative variables and substract them from source grid
-    # -- on coarse grid
     l2r_bs = coarse_grid.bs[left_cg_window_indices]
     l2r_es = coarse_grid.es[left_cg_window_indices]
-    
+
     l2r_bs_masked = defs.TRANSFER_RATIO * np.multiply(l2r_bs, left_cg_b_mask)
     l2r_es_masked = defs.TRANSFER_RATIO * np.multiply(l2r_es, left_cg_e_mask)
-    
+
     l2r_bs_fspace = np.fft.fft(l2r_bs_masked)
     l2r_es_fspace = np.multiply(np.fft.fft(l2r_es_masked), es_shifts_cg)
 
@@ -124,22 +130,48 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
     l2r_buffer_fspace_fg = ref_factor * resize_fspace_buffer(
         l2r_buffer_fspace_cg,
         ref_factor * defs.FFT_WINDOW_SIZE)
-    
-    substract_from_b_cg = np.fft.ifft(l2r_buffer_fspace_cg).real
-    substract_from_e_cg = np.fft.ifft(
+
+    source_b_cg = np.fft.ifft(l2r_buffer_fspace_cg).real
+    source_e_cg = np.fft.ifft(
         np.multiply(l2r_buffer_fspace_cg, es_inverse_shifts_cg)).real
 
-    add_to_b_fg = np.fft.ifft(l2r_buffer_fspace_fg).real
-    add_to_e_fg = np.fft.ifft(
+    target_b_fg = np.fft.ifft(l2r_buffer_fspace_fg).real
+    target_e_fg = np.fft.ifft(
         np.multiply(l2r_buffer_fspace_fg, es_inverse_shifts_fg)).real
 
+    r2l_bs = fine_grid.bs[left_fg_window_indices]
+    r2l_es = fine_grid.es[left_fg_window_indices]
+
+    r2l_bs_masked = defs.TRANSFER_RATIO * np.multiply(r2l_bs, left_fg_b_mask)
+    r2l_es_masked = defs.TRANSFER_RATIO * np.multiply(r2l_es, left_fg_e_mask)
+
+    r2l_bs_fspace = np.fft.fft(r2l_bs_masked)
+    r2l_es_fspace = np.multiply(np.fft.fft(r2l_es_masked), es_shifts_fg)
+
+    r2l_buffer_fspace_fg = 0.5 * (r2l_es_fspace - r2l_bs_fspace)
+    r2l_buffer_fspace_cg = resize_fspace_buffer(
+        r2l_buffer_fspace_fg, defs.FFT_WINDOW_SIZE) / ref_factor
+
+    source_b_fg = np.fft.ifft(r2l_buffer_fspace_fg).real
+    source_e_fg = np.fft.ifft(
+        np.multiply(r2l_buffer_fspace_fg, es_inverse_shifts_fg)).real
+
+    target_b_cg = np.fft.ifft(r2l_buffer_fspace_cg).real
+    target_e_cg = np.fft.ifft(
+        np.multiply(r2l_buffer_fspace_cg, es_inverse_shifts_cg)).real
+
+
     for (local_i, i) in enumerate(left_cg_window_indices):
-        coarse_grid.bs[i] -= substract_from_b_cg[local_i]
-        coarse_grid.es[i] -= substract_from_e_cg[local_i]
+        coarse_grid.bs[i] += (
+            -source_b_cg[local_i] - target_b_cg[local_i])
+        coarse_grid.es[i] += (
+            -source_e_cg[local_i] + target_e_cg[local_i])
 
     for (local_i, i) in enumerate(left_fg_window_indices):
-        fine_grid.bs[i] += add_to_b_fg[local_i]
-        fine_grid.es[i] += add_to_e_fg[local_i]
+        fine_grid.bs[i] += (
+            target_b_fg[local_i] + source_b_fg[local_i])
+        fine_grid.es[i] += (
+            target_e_fg[local_i] - source_e_fg[local_i])
 
     # right interface
     # not yet implemented
@@ -351,7 +383,7 @@ def simulate(ref_factor, output_dir):
         update_e(coarse_grid, skip=cg_skip)
         update_e(fine_grid)
         generate_e((t + 0.5) * coarse_grid.dt)
-        
+
         # update first half b
         update_b(coarse_grid, True, skip=cg_skip)
         update_b(fine_grid, True)
@@ -388,4 +420,3 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     simulate(args.ref_factor, args.output_dir)
-
