@@ -191,19 +191,24 @@ class Transfer:
          cg2fg_source_delta_e,
          cg2fg_target_delta_b,
          cg2fg_target_delta_e) = self.get_coarse_to_fine_deltas()
-        (fg2cg_source_delta_b,
-         fg2cg_source_delta_e,
-         fg2cg_target_delta_b,
-         fg2cg_target_delta_e) = self.get_fine_to_coarse_deltas()
+        # (fg2cg_source_delta_b,
+        #  fg2cg_source_delta_e,
+        #  fg2cg_target_delta_b,
+        #  fg2cg_target_delta_e) = self.get_fine_to_coarse_deltas()
 
-        self.coarse_grid_view.bs += (cg2fg_source_delta_b +
-                                     fg2cg_target_delta_b)
-        self.coarse_grid_view.es += (cg2fg_source_delta_e +
-                                     fg2cg_target_delta_e)
-        self.fine_grid_view.bs += (cg2fg_target_delta_b +
-                                   fg2cg_source_delta_b)
-        self.fine_grid_view.es += (cg2fg_target_delta_e +
-                                   fg2cg_source_delta_e)
+        # self.coarse_grid_view.bs += (cg2fg_source_delta_b +
+        #                              fg2cg_target_delta_b)
+        # self.coarse_grid_view.es += (cg2fg_source_delta_e +
+        #                              fg2cg_target_delta_e)
+        # self.fine_grid_view.bs += (cg2fg_target_delta_b +
+        #                            fg2cg_source_delta_b)
+        # self.fine_grid_view.es += (cg2fg_target_delta_e +
+        #                            fg2cg_source_delta_e)
+
+        self.coarse_grid_view.bs += cg2fg_source_delta_b
+        self.coarse_grid_view.es += cg2fg_source_delta_e
+        self.fine_grid_view.bs += cg2fg_target_delta_b
+        self.fine_grid_view.es += cg2fg_target_delta_e
 
 
 # utility
@@ -295,7 +300,7 @@ def calculate_energy(coarse_grid, fine_grid, ref_factor, transfer_params):
             fg_b = fine_grid.bs[fg_i + j]
 
             left_transfer_region_energy += (
-                    ((cg_b + fg_b)**2 + (cg_e + fg_e)**2) * fine_grid.dx)
+                ((cg_b + fg_b)**2 + (cg_e + fg_e)**2) * fine_grid.dx)
 
     cg_right_transfer_region_indices = range(
             transfer_params['right_cg_window_start'],
@@ -314,7 +319,7 @@ def calculate_energy(coarse_grid, fine_grid, ref_factor, transfer_params):
             fg_b = fine_grid.bs[fg_i + j]
 
             right_transfer_region_energy += (
-                    ((cg_b + fg_b)**2 + (cg_e + fg_e)**2) * fine_grid.dx)
+                ((cg_b + fg_b)**2 + (cg_e + fg_e)**2) * fine_grid.dx)
 
     fine_grid_indices = (
             list(range(transfer_params['left_fg_window_end'],
@@ -344,9 +349,12 @@ def plot_energies(coarse_grid_energies, fine_grid_energies,
     plt.plot(iterations, right_transfer_region_energies, 'm',
             label='right transfer')
 
-    total_energies = [cg + fg + ltr + rtr  for (cg, fg, ltr, rtr) in
-            zip(coarse_grid_energies, fine_grid_energies,
-                left_transfer_region_energies, right_transfer_region_energies)]
+    total_energies = np.asarray([cg + fg + ltr + rtr
+                                 for (cg, fg, ltr, rtr) in
+                                 zip(coarse_grid_energies,
+                                     fine_grid_energies,
+                                     left_transfer_region_energies,
+                                     right_transfer_region_energies)])
     plt.plot(iterations, total_energies, 'k', label='total')
 
     plt.grid()
@@ -374,7 +382,8 @@ def simulate(ref_factor, output_dir):
     fine_grid_size = (defs.FINE_GRID_SIZE * ref_factor +
         2 * (2 + fine_fft_window_size))
 
-    fine_grid = Grid(fine_grid_size, fine_x0, defs.dx / ref_factor, defs.dt)
+    fine_grid = Grid(fine_grid_size, fine_x0, defs.dx / ref_factor,
+                     defs.dt / ref_factor)
 
     # pack grids and indices into dicts for ease of passing into functions
     transfer_params = {
@@ -419,22 +428,23 @@ def simulate(ref_factor, output_dir):
 
         cg_skip = lambda i: i >= fine_grid_start + 2 and i < fine_grid_end - 2
 
-        # update second half b
+        # update fields on coarse grid
         update_b(coarse_grid, False, skip=cg_skip)
-        update_b(fine_grid, False)
         generate_b(t * coarse_grid.dt)
 
-        # update e
         update_e(coarse_grid, skip=cg_skip)
-        update_e(fine_grid)
         generate_e((t + 0.5) * coarse_grid.dt)
 
-        # update first half b
         update_b(coarse_grid, True, skip=cg_skip)
-        update_b(fine_grid, True)
+
+        # update fields on fine grid
+        for _ in range(ref_factor):
+            update_b(fine_grid, False)
+            update_e(fine_grid)
+            update_b(fine_grid, True)
 
         left_transfer.perform()
-        right_transfer.perform()
+        # right_transfer.perform()
 
         if t % defs.OUTPUT_PERIOD == 0:
             build_plot(coarse_grid, fine_grid, t // defs.OUTPUT_PERIOD,
