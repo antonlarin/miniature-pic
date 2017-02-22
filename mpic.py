@@ -191,24 +191,19 @@ class Transfer:
          cg2fg_source_delta_e,
          cg2fg_target_delta_b,
          cg2fg_target_delta_e) = self.get_coarse_to_fine_deltas()
-        # (fg2cg_source_delta_b,
-        #  fg2cg_source_delta_e,
-        #  fg2cg_target_delta_b,
-        #  fg2cg_target_delta_e) = self.get_fine_to_coarse_deltas()
+        (fg2cg_source_delta_b,
+         fg2cg_source_delta_e,
+         fg2cg_target_delta_b,
+         fg2cg_target_delta_e) = self.get_fine_to_coarse_deltas()
 
-        # self.coarse_grid_view.bs += (cg2fg_source_delta_b +
-        #                              fg2cg_target_delta_b)
-        # self.coarse_grid_view.es += (cg2fg_source_delta_e +
-        #                              fg2cg_target_delta_e)
-        # self.fine_grid_view.bs += (cg2fg_target_delta_b +
-        #                            fg2cg_source_delta_b)
-        # self.fine_grid_view.es += (cg2fg_target_delta_e +
-        #                            fg2cg_source_delta_e)
-
-        self.coarse_grid_view.bs += cg2fg_source_delta_b
-        self.coarse_grid_view.es += cg2fg_source_delta_e
-        self.fine_grid_view.bs += cg2fg_target_delta_b
-        self.fine_grid_view.es += cg2fg_target_delta_e
+        self.coarse_grid_view.bs += (cg2fg_source_delta_b +
+                                     fg2cg_target_delta_b)
+        self.coarse_grid_view.es += (cg2fg_source_delta_e +
+                                     fg2cg_target_delta_e)
+        self.fine_grid_view.bs += (cg2fg_target_delta_b +
+                                   fg2cg_source_delta_b)
+        self.fine_grid_view.es += (cg2fg_target_delta_e +
+                                   fg2cg_source_delta_e)
 
 
 # utility
@@ -444,7 +439,7 @@ def simulate(ref_factor, output_dir):
             update_b(fine_grid, True)
 
         left_transfer.perform()
-        # right_transfer.perform()
+        right_transfer.perform()
 
         if t % defs.OUTPUT_PERIOD == 0:
             build_plot(coarse_grid, fine_grid, t // defs.OUTPUT_PERIOD,
