@@ -11,71 +11,24 @@ import defs
 from grid import Grid
 from pml import Pml
 
-# TFSF
-def _source(grid, dst_field, dst_idx, src_value, direction):
-    direction_factor = -1 if direction == 'left' else 1
-    dst_field[dst_idx] += direction_factor * grid.cdt_by_dx * src_value
-
-def b_source(grid, dst_idx, e_value, direction):
-    _source(grid, grid.bs, dst_idx, e_value, direction)
-
-def e_source(grid, dst_idx, b_value, direction):
-    _source(grid, grid.es, dst_idx, b_value, direction)
-
-
 # field update
 def update_e(grid, **kwargs):
     skip = kwargs.get('skip', lambda x: False)
-    for i in range(grid.size - 1):
+    for i in range(1, grid.size - 1):
         if not skip(i):
             A, B = grid.get_e_coeffs(i)
-            grid.es[i] = A * grid.es[i] + B * (grid.bs[i] - grid.bs[i + 1])
+            grid.es[i] = A * grid.es[i] + B * (grid.bs[i - 1] - grid.bs[i + 1])
 
-def update_b(grid, first_half, **kwargs):
+def update_b(grid, **kwargs):
     skip = kwargs.get('skip', lambda x: False)
-    for i in range(1, grid.size):
+    for i in range(1, grid.size - 1):
         if not skip(i):
             A, B = grid.get_b_coeffs(i)
-            if not grid.in_pml(i):
-                grid.bs[i] = (A * grid.bs[i] +
-                        0.5 * B * (grid.es[i - 1] - grid.es[i]))
-            elif not first_half:
-                grid.bs[i] = A * grid.bs[i] + B * (grid.es[i - 1] - grid.es[i])
-
-
-# field generation
-def get_field_generator(coarse_grid):
-    _fieldgen_idx = defs.PML_SIZE + 1;
-    left_e_x = coarse_grid.x_of(_fieldgen_idx + 0.5)
-    right_e_x = coarse_grid.x_of(defs.COARSE_GRID_SIZE - _fieldgen_idx - 0.5)
-    def generate_b(t):
-        # left
-        b_source(coarse_grid, _fieldgen_idx, defs.left_e(left_e_x, t),
-                'right')
-
-        # right
-        b_source(coarse_grid, defs.COARSE_GRID_SIZE - _fieldgen_idx,
-                defs.right_e(right_e_x, t), 'left')
-
-    left_b_x = coarse_grid.x_of(_fieldgen_idx)
-    right_b_x = coarse_grid.x_of(defs.COARSE_GRID_SIZE - _fieldgen_idx)
-    def generate_e(t):
-        # left
-        e_source(coarse_grid, _fieldgen_idx, defs.left_b(left_b_x, t),
-                'right')
-
-        # right
-        e_source(coarse_grid, defs.COARSE_GRID_SIZE - _fieldgen_idx - 1,
-                defs.right_b(right_b_x, t), 'left')
-
-    return (generate_b, generate_e)
+            grid.bs[i] = (A * grid.bs[i] +
+                          0.5 * B * (grid.es[i - 1] - grid.es[i + 1]))
 
 
 # transfers
-def lagrange3_middle(f0, f1, f2, f3):
-    return (-f0 + 9*f1 + 9*f2 - f3) / 16
-
-
 def resize_fspace_buffer(buffer, new_size):
     if new_size >= len(buffer):
         padding_size = new_size - len(buffer)
@@ -93,7 +46,7 @@ def resize_fspace_buffer(buffer, new_size):
 
 def fill_source_buffer(src_grid, src_indices, l2r_propagation):
     cell_count = len(src_indices)
-    buffer_size = 2 * cell_count
+    buffer_size = cell_count
     transfer_buffer = np.zeros(buffer_size)
     common_coeff = 0.5 * defs.TRANSFER_RATIO
     direction_coeff = 1 if l2r_propagation else -1
@@ -103,21 +56,8 @@ def fill_source_buffer(src_grid, src_indices, l2r_propagation):
 
         mask = defs.transfer_mask(local_i / cell_count)
         coeff = common_coeff * mask
-        transfer_buffer[2 * local_i] = coeff * (
-                direction_coeff * src_grid.bs[i] +
-                lagrange3_middle(src_grid.es[i - 2],
-                    src_grid.es[i - 1],
-                    src_grid.es[i],
-                    src_grid.es[i + 1]))
-
-        mask = defs.transfer_mask((local_i + .5) / cell_count)
-        coeff = common_coeff * mask
-        transfer_buffer[2 * local_i + 1] = coeff * (
-                src_grid.es[i] +
-                direction_coeff * lagrange3_middle(src_grid.bs[i - 1],
-                    src_grid.bs[i],
-                    src_grid.bs[i + 1],
-                    src_grid.bs[i + 2]))
+        transfer_buffer[local_i] = coeff * (direction_coeff * src_grid.bs[i] +
+                                            src_grid.es[i])
 
     return transfer_buffer
 
@@ -134,20 +74,22 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
     # -- on coarse grid
     left_cg_window_indices = range(left_cg_window_start, left_cg_window_end)
 
-    l2r_buffer = fill_source_buffer(coarse_grid, left_cg_window_indices, True)
+    l2r_buffer = fill_source_buffer(coarse_grid, left_cg_window_indices,
+                                    l2r_propagation=True)
     for i in left_cg_window_indices:
         local_i = i - left_cg_window_start
-        coarse_grid.bs[i] -= l2r_buffer[2 * local_i]
-        coarse_grid.es[i] -= l2r_buffer[2 * local_i + 1]
+        coarse_grid.bs[i] -= l2r_buffer[local_i]
+        coarse_grid.es[i] -= l2r_buffer[local_i]
 
     # -- on fine grid
     left_fg_window_indices = range(left_fg_window_start, left_fg_window_end)
 
-    r2l_buffer = fill_source_buffer(fine_grid, left_fg_window_indices, False)
+    r2l_buffer = fill_source_buffer(fine_grid, left_fg_window_indices,
+                                    l2r_propagation=False)
     for i in left_fg_window_indices:
         local_i = i - left_fg_window_start
-        fine_grid.bs[i] += r2l_buffer[2 * local_i]
-        fine_grid.es[i] -= r2l_buffer[2 * local_i + 1]
+        fine_grid.bs[i] += r2l_buffer[local_i]
+        fine_grid.es[i] -= r2l_buffer[local_i]
 
 
     # - insert alternative variables into target grids
@@ -163,8 +105,8 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
 
     for i in left_fg_window_indices:
         local_i = i - left_fg_window_start
-        fine_grid.bs[i] += l2r_buffer_fg[local_i * 2]
-        fine_grid.es[i] += l2r_buffer_fg[local_i * 2 + 1]
+        fine_grid.bs[i] += l2r_buffer_fg[local_i]
+        fine_grid.es[i] += l2r_buffer_fg[local_i]
 
     # -- in coarse grid
     r2l_buffer_fspace_fg = np.fft.fft(r2l_buffer)
@@ -175,8 +117,8 @@ def conduct_transfers(coarse_grid, fine_grid, transfer_params):
 
     for i in left_cg_window_indices:
         local_i = i - left_cg_window_start
-        coarse_grid.bs[i] -= r2l_buffer_cg[local_i * 2]
-        coarse_grid.es[i] += r2l_buffer_cg[local_i * 2 + 1]
+        coarse_grid.bs[i] -= r2l_buffer_cg[local_i]
+        coarse_grid.es[i] += r2l_buffer_cg[local_i]
 
     # right interface
     # not yet implemented
@@ -192,12 +134,12 @@ def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
     params = { 'basey': 10, 'nonposy': 'clip' }
     plt.subplot(211)
     try:
-        plt.semilogy(xs, coarse_grid.bs, 'r', label='CG', **params)
+        plt.semilogy(xs,np.absolute(coarse_grid.bs), 'r', label='CG', **params)
     except ValueError:
         pass
 
     try:
-        plt.semilogy(fine_xs, fine_grid.bs, 'b', label='FG', **params)
+        plt.semilogy(fine_xs, np.absolute(fine_grid.bs), 'b', label='FG', **params)
     except ValueError:
         pass
 
@@ -205,19 +147,19 @@ def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
     plt.grid(which='minor')
     plt.legend(loc='best')
     plt.ylabel('Bz')
-    plt.ylim(1e-10, 1)
+    plt.ylim(1e-20, 1)
     plt.xlim(xs[0], xs[-1])
 
     xs = map(lambda x: x + 0.5 * coarse_grid.dx, xs)
     fine_xs = map(lambda x: x + 0.5 * fine_grid.dx, fine_xs)
     plt.subplot(212)
     try:
-        plt.semilogy(xs, coarse_grid.es, 'r', label='CG', **params)
+        plt.semilogy(xs, np.absolute(coarse_grid.es), 'r', label='CG', **params)
     except ValueError:
         pass
 
     try:
-        plt.semilogy(fine_xs, fine_grid.es, 'b', label='FG', **params)
+        plt.semilogy(fine_xs, np.absolute(fine_grid.es), 'b', label='FG', **params)
     except ValueError:
         pass
 
@@ -226,7 +168,7 @@ def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
     plt.legend(loc='best')
     plt.xlabel('x')
     plt.ylabel('Ey')
-    plt.ylim(1e-10, 1)
+    plt.ylim(1e-20, 1)
     plt.xlim(xs[0], xs[-1])
 
     filename_pattern = output_dir + os.sep + '{0:06d}.png'
@@ -333,12 +275,12 @@ def plot_energies(coarse_grid_energies, fine_grid_energies,
 def simulate(ref_factor, output_dir):
     # coarse grid
     coarse_grid = Grid(defs.COARSE_GRID_SIZE, defs.x0, defs.dx, defs.dt)
-    coarse_grid.add_pml(Pml(defs.PML_SIZE, 1, coarse_grid))
-    coarse_grid.add_pml(Pml(defs.COARSE_GRID_SIZE - defs.PML_SIZE - 1,
-            defs.COARSE_GRID_SIZE - 2, coarse_grid))
+    # for i in range(coarse_grid.size):
+    #     coarse_grid.es[i] = defs.INITIAL_E(coarse_grid.x_of(i))
+    #     coarse_grid.bs[i] = defs.INITIAL_B(coarse_grid.x_of(i))
 
     # fine grid
-    fine_grid_start = (defs.COARSE_GRID_SIZE - defs.FINE_GRID_SIZE) // 2
+    fine_grid_start = defs.FINE_GRID_START
     fine_grid_end = fine_grid_start + defs.FINE_GRID_SIZE
     fine_x0 = (defs.x0 + (fine_grid_start - defs.FFT_WINDOW_SIZE) * defs.dx -
             2 * defs.dx / ref_factor)
@@ -346,7 +288,8 @@ def simulate(ref_factor, output_dir):
     fine_grid_size = (defs.FINE_GRID_SIZE * ref_factor +
         2 * (2 + fine_fft_window_size))
 
-    fine_grid = Grid(fine_grid_size, fine_x0, defs.dx / ref_factor, defs.dt)
+    fine_grid = Grid(fine_grid_size, fine_x0, defs.dx / ref_factor,
+                     defs.dt / ref_factor)
 
     # pack grids and indices into dicts for ease of passing into functions
     transfer_params = {
@@ -363,8 +306,6 @@ def simulate(ref_factor, output_dir):
             'right_fg_window_end': fine_grid_size - 2
     }
 
-    generate_b, generate_e = get_field_generator(coarse_grid)
-
     coarse_grid_energies = []
     fine_grid_energies = []
     left_transfer_region_energies = []
@@ -372,31 +313,29 @@ def simulate(ref_factor, output_dir):
 
     sys.stdout.write('iteration ')
     for t in range(defs.ITERATIONS):
-        t_str = '{}'.format(t)
+        t_str = '{} out of {}'.format(t, defs.ITERATIONS)
         sys.stdout.write(t_str)
         sys.stdout.flush()
 
         cg_skip = lambda i: i >= fine_grid_start + 2 and i < fine_grid_end - 2
 
-        # update second half b
-        update_b(coarse_grid, False, skip=cg_skip)
-        update_b(fine_grid, False)
-        generate_b(t * coarse_grid.dt)
+        coarse_grid.es[0] = defs.left_e(coarse_grid.x_of(0), t * coarse_grid.dt)
+        coarse_grid.bs[0] = defs.left_b(coarse_grid.x_of(0), t * coarse_grid.dt)
 
-        # update e
+        update_b(coarse_grid, skip=cg_skip)
         update_e(coarse_grid, skip=cg_skip)
-        update_e(fine_grid)
-        generate_e((t + 0.5) * coarse_grid.dt)
-        
-        # update first half b
-        update_b(coarse_grid, True, skip=cg_skip)
-        update_b(fine_grid, True)
+        update_b(coarse_grid, skip=cg_skip)
+
+        for _ in range(ref_factor):
+            update_b(fine_grid)
+            update_e(fine_grid)
+            update_b(fine_grid)
 
         conduct_transfers(coarse_grid, fine_grid, transfer_params)
 
         if t % defs.OUTPUT_PERIOD == 0:
             build_plot(coarse_grid, fine_grid, t // defs.OUTPUT_PERIOD,
-                    output_dir)
+                       output_dir)
 
         if t % defs.ENERGY_OUTPUT_PERIOD == 0:
             cg_en, fg_en, ltr_en, rtr_en = calculate_energy(
@@ -414,6 +353,16 @@ def simulate(ref_factor, output_dir):
             coarse_grid_energies, fine_grid_energies,
             left_transfer_region_energies, right_transfer_region_energies,
             output_dir)
+    with open(output_dir + os.sep + 'energies.txt', 'wt') as enfile:
+        iter = 0
+        for cg_en, fg_en, ltr_en, rtr_en in zip(
+                coarse_grid_energies,
+                fine_grid_energies,
+                left_transfer_region_energies,
+                right_transfer_region_energies):
+            print('{0} {1:.15g} {2:.15g} {3:.15g} {4:.15g}'.format(
+                iter, cg_en, fg_en, ltr_en, rtr_en), file=enfile)
+            iter += defs.ENERGY_OUTPUT_PERIOD
 
 
 if __name__ == '__main__':
@@ -424,4 +373,3 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     simulate(args.ref_factor, args.output_dir)
-

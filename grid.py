@@ -28,14 +28,14 @@ class Grid(object):
             if pml.is_inside(i):
                 return pml.get_e_coeffs(i)
 
-        return (1, C * self.dt / self.dx)
+        return (1, 0.5 * C * self.dt / self.dx)
 
     def get_b_coeffs(self, i):
         for pml in self.pmls:
             if pml.is_inside(i):
                 return pml.get_b_coeffs(i)
 
-        return (1, C * self.dt / self.dx)
+        return (1, 0.5 * C * self.dt / self.dx)
 
     def in_pml(self, i):
         result = False
@@ -45,4 +45,3 @@ class Grid(object):
 
     def x_of(self, index):
         return self.x0 + self.dx * index
-
