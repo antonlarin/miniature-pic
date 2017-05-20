@@ -21,27 +21,19 @@ class Pml(object):
 
     def compute_coeffs(self):
         dx, dt = self.grid.dx, self.grid.dt
-        e_coeffs, b_coeffs = [], []
+        coeffs = []
         left = min(self.start, self.finish)
         right = max(self.start, self.finish)
         for i in range(left, right + 1):
-            # b
+            # both b and e
             sigma = self.compute_sigma(i)
             if sigma < 1e-8:
-                b_coeffs.append((1, C * dt / dx))
+                coeffs.append((1, 0.5 * C * dt / dx))
             else:
                 exp_coeff = exp(-sigma * C * dt)
-                b_coeffs.append((exp_coeff, (1 - exp_coeff) / sigma / dx))
+                coeffs.append((exp_coeff, 0.5 * (1 - exp_coeff) / sigma / dx))
 
-            # e
-            sigma = self.compute_sigma(i + 0.5)
-            if sigma < 1e-8:
-                e_coeffs.append((1, C * dt / dx))
-            else:
-                exp_coeff = exp(-sigma * C * dt)
-                e_coeffs.append((exp_coeff, (1 - exp_coeff) / sigma / dx))
-
-        return (b_coeffs, e_coeffs)
+        return (coeffs, coeffs)
 
     def compute_sigma(self, i):
         if self.start < self.finish:
@@ -63,4 +55,3 @@ class Pml(object):
     def get_b_coeffs(self, i):
         left = min(self.start, self.finish)
         return self.b_coeffs[i - left]
-
