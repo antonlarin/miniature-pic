@@ -235,7 +235,7 @@ def simulate(ref_factor, output_dir):
             defs.COARSE_GRID_SIZE - 2, coarse_grid))
 
     # fine grid
-    fine_grid_start = (defs.COARSE_GRID_SIZE - defs.FINE_GRID_SIZE) // 2
+    fine_grid_start = defs.FINE_GRID_START
     fine_grid_end = fine_grid_start + defs.FINE_GRID_SIZE
     fine_x0 = (defs.x0 + (fine_grid_start - defs.FFT_WINDOW_SIZE) * defs.dx -
             2 * defs.dx / ref_factor)
@@ -327,7 +327,16 @@ def simulate(ref_factor, output_dir):
             coarse_grid_energies, fine_grid_energies,
             left_transfer_region_energies, right_transfer_region_energies,
             output_dir)
-
+    with open(output_dir + os.sep + 'energies.txt', 'wt') as enfile:
+        iter = 0
+        for cg_en, fg_en, ltr_en, rtr_en in zip(
+                coarse_grid_energies,
+                fine_grid_energies,
+                left_transfer_region_energies,
+                right_transfer_region_energies):
+            print('{0} {1:.15g} {2:.15g} {3:.15g} {4:.15g}'.format(
+                iter, cg_en, fg_en, ltr_en, rtr_en), file=enfile)
+            iter += defs.ENERGY_OUTPUT_PERIOD
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
