@@ -10,6 +10,7 @@ import argparse
 import defs
 from grid import Grid
 from pml import Pml
+from transfer import Transfer
 
 # TFSF
 def _source(grid, dst_field, dst_idx, src_value, direction):
@@ -71,141 +72,6 @@ def get_field_generator(coarse_grid):
     return (generate_b, generate_e)
 
 
-# transfers
-def resize_fspace_buffer(buffer, new_size):
-    if new_size >= len(buffer):
-        padding_size = new_size - len(buffer)
-        pad_items = np.zeros(padding_size, dtype=complex)
-        resized_buffer = np.insert(buffer, -(len(buffer) // 2), pad_items)
-    else:
-        nonnegative_freq_count = (new_size + 1) // 2
-        negative_freq_count = new_size // 2
-        resized_buffer = np.delete(buffer,
-                range(nonnegative_freq_count,
-                    len(buffer) - negative_freq_count))
-
-    return resized_buffer
-
-
-class Transfer:
-    def __init__(self, coarse_grid_view, fine_grid_view, fine_to_the_right):
-        self.coarse_grid_view = coarse_grid_view
-        self.fine_grid_view = fine_grid_view
-        self.direction_coeff = 1 if fine_to_the_right else -1
-
-        self.coarse_buffer_size = coarse_grid_view.size
-        self.fine_buffer_size = fine_grid_view.size
-        self.fspace_interpolation_factor = (
-            self.fine_buffer_size / self.coarse_buffer_size)
-
-        self.coarse_b_mask = [
-            defs.transfer_mask(i / self.coarse_buffer_size)
-            for i in range(self.coarse_buffer_size)]
-        self.coarse_e_mask = [
-            defs.transfer_mask((i + 0.5) / self.coarse_buffer_size)
-            for i in range(self.coarse_buffer_size)]
-        self.fine_b_mask = [
-            defs.transfer_mask(i / self.fine_buffer_size)
-            for i in range(self.fine_buffer_size)]
-        self.fine_e_mask = [
-            defs.transfer_mask((i + 0.5) / self.fine_buffer_size)
-            for i in range(self.fine_buffer_size)]
-
-        self.coarse_e_shifts = np.exp(
-            -1j * math.pi * np.fft.fftfreq(self.coarse_buffer_size))
-        self.coarse_e_inverse_shifts = 1 / self.coarse_e_shifts
-        self.fine_e_shifts = np.exp(
-            -1j * math.pi * np.fft.fftfreq(self.fine_buffer_size))
-        self.fine_e_inverse_shifts = 1 / self.fine_e_shifts
-
-
-    def get_coarse_to_fine_deltas(self):
-        bs_masked = (
-            defs.TRANSFER_RATIO *
-            np.multiply(self.coarse_grid_view.bs, self.coarse_b_mask))
-        es_masked = (
-            defs.TRANSFER_RATIO *
-            np.multiply(self.coarse_grid_view.es, self.coarse_e_mask))
-
-        bs_fspace = np.fft.fft(bs_masked)
-        es_fspace = np.multiply(np.fft.fft(es_masked), self.coarse_e_shifts)
-
-        source_buffer_fspace = 0.5 * (self.direction_coeff * bs_fspace +
-                                      es_fspace)
-        target_buffer_fspace = (self.fspace_interpolation_factor *
-                                resize_fspace_buffer(source_buffer_fspace,
-                                                     self.fine_buffer_size))
-
-        source_delta_b = (-self.direction_coeff *
-                          np.fft.ifft(source_buffer_fspace).real)
-        source_delta_e = -np.fft.ifft(
-            np.multiply(source_buffer_fspace,
-                        self.coarse_e_inverse_shifts)).real
-
-        target_delta_b = (self.direction_coeff *
-                          np.fft.ifft(target_buffer_fspace).real)
-        target_delta_e = np.fft.ifft(
-            np.multiply(target_buffer_fspace,
-                        self.fine_e_inverse_shifts)).real
-
-        return (source_delta_b, source_delta_e,
-                target_delta_b, target_delta_e)
-
-
-    def get_fine_to_coarse_deltas(self):
-        bs_masked = (
-            defs.TRANSFER_RATIO *
-            np.multiply(self.fine_grid_view.bs, self.fine_b_mask))
-        es_masked = (
-            defs.TRANSFER_RATIO *
-            np.multiply(self.fine_grid_view.es, self.fine_e_mask))
-
-        bs_fspace = np.fft.fft(bs_masked)
-        es_fspace = np.multiply(np.fft.fft(es_masked), self.fine_e_shifts)
-
-        source_buffer_fspace = 0.5 * (-self.direction_coeff * bs_fspace +
-                                      es_fspace)
-        target_buffer_fspace = (
-            resize_fspace_buffer(source_buffer_fspace,
-                                 self.coarse_buffer_size) /
-            self.fspace_interpolation_factor)
-
-        source_delta_b = (self.direction_coeff *
-                          np.fft.ifft(source_buffer_fspace).real)
-        source_delta_e = -np.fft.ifft(
-            np.multiply(source_buffer_fspace,
-                        self.fine_e_inverse_shifts)).real
-
-        target_delta_b = (-self.direction_coeff *
-                          np.fft.ifft(target_buffer_fspace).real)
-        target_delta_e = np.fft.ifft(
-            np.multiply(target_buffer_fspace,
-                        self.coarse_e_inverse_shifts)).real
-
-        return (source_delta_b, source_delta_e,
-                target_delta_b, target_delta_e)
-
-
-    def perform(self):
-        (cg2fg_source_delta_b,
-         cg2fg_source_delta_e,
-         cg2fg_target_delta_b,
-         cg2fg_target_delta_e) = self.get_coarse_to_fine_deltas()
-        (fg2cg_source_delta_b,
-         fg2cg_source_delta_e,
-         fg2cg_target_delta_b,
-         fg2cg_target_delta_e) = self.get_fine_to_coarse_deltas()
-
-        self.coarse_grid_view.bs += (cg2fg_source_delta_b +
-                                     fg2cg_target_delta_b)
-        self.coarse_grid_view.es += (cg2fg_source_delta_e +
-                                     fg2cg_target_delta_e)
-        self.fine_grid_view.bs += (cg2fg_target_delta_b +
-                                   fg2cg_source_delta_b)
-        self.fine_grid_view.es += (cg2fg_target_delta_e +
-                                   fg2cg_source_delta_e)
-
-
 # utility
 def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
     xs = [coarse_grid.x_of(i) for i in range(len(coarse_grid.bs))]
@@ -216,12 +82,12 @@ def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
     params = { 'basey': 10, 'nonposy': 'clip' }
     plt.subplot(211)
     try:
-        plt.semilogy(xs, coarse_grid.bs, 'r', label='CG', **params)
+        plt.semilogy(xs, np.absolute(coarse_grid.bs), 'r', label='CG', **params)
     except ValueError:
         pass
 
     try:
-        plt.semilogy(fine_xs, fine_grid.bs, 'b', label='FG', **params)
+        plt.semilogy(fine_xs, np.absolute(fine_grid.bs), 'b', label='FG', **params)
     except ValueError:
         pass
 
@@ -229,19 +95,19 @@ def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
     plt.grid(which='minor')
     plt.legend(loc='best')
     plt.ylabel('Bz')
-    plt.ylim(1e-10, 1)
+    plt.ylim(1e-8, 1)
     plt.xlim(xs[0], xs[-1])
 
     xs = map(lambda x: x + 0.5 * coarse_grid.dx, xs)
     fine_xs = map(lambda x: x + 0.5 * fine_grid.dx, fine_xs)
     plt.subplot(212)
     try:
-        plt.semilogy(xs, coarse_grid.es, 'r', label='CG', **params)
+        plt.semilogy(xs, np.absolute(coarse_grid.es), 'r', label='CG', **params)
     except ValueError:
         pass
 
     try:
-        plt.semilogy(fine_xs, fine_grid.es, 'b', label='FG', **params)
+        plt.semilogy(fine_xs, np.absolute(fine_grid.es), 'b', label='FG', **params)
     except ValueError:
         pass
 
@@ -250,7 +116,7 @@ def build_plot(coarse_grid, fine_grid, pic_idx, output_dir):
     plt.legend(loc='best')
     plt.xlabel('x')
     plt.ylabel('Ey')
-    plt.ylim(1e-10, 1)
+    plt.ylim(1e-8, 1)
     plt.xlim(xs[0], xs[-1])
 
     filename_pattern = output_dir + os.sep + '{0:06d}.png'
@@ -417,7 +283,7 @@ def simulate(ref_factor, output_dir):
 
     sys.stdout.write('iteration ')
     for t in range(defs.ITERATIONS):
-        t_str = '{}'.format(t)
+        t_str = '{} out of {}'.format(t, defs.ITERATIONS)
         sys.stdout.write(t_str)
         sys.stdout.flush()
 
