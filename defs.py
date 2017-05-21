@@ -55,16 +55,26 @@ def pulse(x, t):
 # source fields
 def left_b(x, t):
     return pulse(x, t)
-    # return 0
 
 def left_e(x, t):
     return pulse(x, t)
-    # return 0
 
+x1 = x0 + dx * COARSE_GRID_SIZE
 def right_b(x, t):
     return 0
-    # return -pulse(-x, t)
 
 def right_e(x, t):
     return 0
-    # return pulse(-x, t)
+
+# def left_b(x, t):
+#     return 0
+
+# def left_e(x, t):
+#     return 0
+
+# x1 = x0 + dx * COARSE_GRID_SIZE
+# def right_b(x, t):
+#     return -pulse(x1 - x, t)
+
+# def right_e(x, t):
+#     return pulse(x1 - x, t)

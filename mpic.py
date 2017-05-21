@@ -64,7 +64,7 @@ def get_field_generator(coarse_grid):
 # field update
 def update_e(grid, **kwargs):
     skip = kwargs.get('skip', lambda x: False)
-    for i in range(1, grid.size - 1):
+    for i in range(1, grid.size - 2):
         if not skip(i):
             A, B = grid.get_e_coeffs(i)
             grid.es[i] = A * grid.es[i] + B * (grid.bs[i - 1] - grid.bs[i + 1])
@@ -74,7 +74,7 @@ def update_half_b(grid, **kwargs):
     first_half = kwargs.get('first_half', False)
     second_half = not first_half
 
-    for i in range(1, grid.size - 1):
+    for i in range(2, grid.size - 1):
         if not skip(i) and (second_half or not grid.in_pml(i)):
             A, B = grid.get_b_coeffs(i)
             grid.bs[i] = A * grid.bs[i] + B * (grid.es[i - 1] - grid.es[i + 1])

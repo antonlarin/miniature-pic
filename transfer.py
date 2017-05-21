@@ -85,7 +85,7 @@ class Transfer(object):
         coarse_fspace_buffer = (resize_fspace_buffer(fine_fspace_buffer,
                                                      self.coarse_buffer_size) /
                                 self.fspace_interpolation_factor)
-        coarse_buffer = np.fft.ifft(fine_fspace_buffer).real
+        coarse_buffer = np.fft.ifft(coarse_fspace_buffer).real
 
         return (-self.fg2cg_direction * fine_buffer, -fine_buffer,
                 self.fg2cg_direction * coarse_buffer, coarse_buffer)
