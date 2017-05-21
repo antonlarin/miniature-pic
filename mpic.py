@@ -311,7 +311,16 @@ def simulate(ref_factor, output_dir):
             coarse_grid_energies, fine_grid_energies,
             left_transfer_region_energies, right_transfer_region_energies,
             output_dir)
-
+    with open(output_dir + os.sep + 'energies.txt', 'wt') as enfile:
+        iter = 0
+        for cg_en, fg_en, ltr_en, rtr_en in zip(
+                coarse_grid_energies,
+                fine_grid_energies,
+                left_transfer_region_energies,
+                right_transfer_region_energies):
+            print('{0} {1:.15g} {2:.15g} {3:.15g} {4:.15g}'.format(
+                iter, cg_en, fg_en, ltr_en, rtr_en), file=enfile)
+            iter += defs.ENERGY_OUTPUT_PERIOD
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
