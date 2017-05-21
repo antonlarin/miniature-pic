@@ -45,3 +45,10 @@ class Grid(object):
 
     def x_of(self, index):
         return self.x0 + self.dx * index
+
+    def slice(self, begin, end):
+        result = Grid(end - begin, self.x_of(begin), self.dx, self.dt)
+        result.bs = self.bs[begin:end]
+        result.es = self.es[begin:end]
+
+        return result
