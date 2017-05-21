@@ -131,10 +131,14 @@ def calculate_energy(coarse_grid, fine_grid, ref_factor,
     right_transfer_region_energy = 0
 
     cg_indices = (
-            list(range(defs.PML_SIZE + 1,
-                       left_transfer_params['cg_window_start'])) +
-            list(range(left_transfer_params['cg_window_end'],
-                       left_transfer_params['cg_window_end'] + 2)))
+        list(range(defs.PML_SIZE + 1,
+                   left_transfer_params['cg_window_start'])) +
+        list(range(left_transfer_params['cg_window_end'],
+                   left_transfer_params['cg_window_end'] + 2)) +
+        list(range(right_transfer_params['cg_window_start'] - 2,
+                   right_transfer_params['cg_window_start'])) +
+        list(range(right_transfer_params['cg_window_end'],
+                   coarse_grid.size - defs.PML_SIZE - 1)))
 
     for i in cg_indices:
         e = coarse_grid.es[i]
